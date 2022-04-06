@@ -16,15 +16,16 @@ colBP <- c('#A80D11', '#008DB8')
 colSCSN <- c('#E1AC24', '#288F56')
 
 #### UMAPs
-seu <- readRDS('data/MBPM/data_MBPM.rds')
-seu <- subset(seu, cell_type_int %notin% c('Low-quality cells', 'Doublets', 'Contamination', 'Not determined'))
+seu <- readRDS('data/MBPM/data_MBPM_scn.rds')
+seu <- subset(seu, cell_type_int %notin% c('Low-quality cells', 'Doublets', 'Contamination', 'Undetermined'))
 seu <- ScaleData(seu) %>% RunPCA(npcs = 85)
 seu <- RunUMAP(seu, dims = 1:85, spread = 1.5, min.dist = 0.1)
 
 
 # Plots
-ifelse(!dir.exists(file.path(paste0('data/MBPM/global'))), dir.create(file.path(paste0('data/MBPM/global')), recursive = T), FALSE)
-pdf(file = 'data/MBPM/global/plots_MBPM_global_final.pdf')
+ifelse(!dir.exists(file.path(paste0('data/MBPM/global'))), 
+       dir.create(file.path(paste0('data/MBPM/global')), recursive = T), FALSE)
+pdf(file = 'data/MBPM/global/plots_MBPM_global.pdf')
 DimPlot(seu, reduction = 'umap', label = F, group.by = 'sequencing', shuffle = T, raster = T, cols = colSCSN) + NoLegend()
 DimPlot(seu, reduction = 'umap', label = F, group.by = 'sequencing', shuffle = T, raster = T, cols = colSCSN)
 

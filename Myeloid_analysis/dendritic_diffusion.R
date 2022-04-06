@@ -19,14 +19,15 @@ colDC <- c('#DE8C00', '#F564E3', '#7CAE00', '#00B4F0', '#00C08B')
 
 
 # Read-in integrated object and subset to monocytes and DCs
-seu <- readRDS('data/MBPM/data_MBPM.rds')
-seu <- subset(seu, cell_type_fine %in% c('Monocytes', 'cDC1', 'cDC2', 'DC3', 'mo-DCs'))
+seu <- readRDS('data/MBPM/data_MBPM_scn.rds')
+seu <- subset(seu, cell_type_fine %in% c('Monocytes', 'cDC1', 'cDC2', 'DC3'))
 
 # Apply signatures
 sigs <- read.csv('signatures/myeloid_signatures.csv', na.strings = '')
 for (c in 1:ncol(sigs)) {
   sig <- as.character(na.omit(sigs[, c]))
-  seu <- AddModuleScore(object = seu, features = list(sig), name = colnames(sigs[c]), assay = 'RNA', search = F)
+  seu <- AddModuleScore(object = seu, features = list(sig), name = colnames(sigs[c]), 
+                        assay = 'RNA', search = F)
 }
 
 # Generate diffusion map
@@ -36,27 +37,35 @@ dm <- DiffusionMap(es, verbose = T, n_pcs = 30)
 
 # Plots
 pdf('data/diffusion/myeloid/DC/plots_MBPM_myeloid_dc_dm.pdf')
-par(mar = c(5.1, 4.1, 4.1, 2.1), xpd = TRUE)
-palette(colSCSN)
-plot(dm, col = as.factor(es@phenoData@data$sequencing), main = 'sequencing', pch = 20)
-legend('bottomright', inset = c(-0.05, 0), legend = levels(as.factor(es@phenoData@data$sequencing)), 
-       pch = 16, col = as.factor(levels(as.factor(es@phenoData@data$sequencing))), bty = 'n')
+set.seed(1)
+dm_df<-as.data.frame(dm@eigenvectors)[sample(nrow(as.data.frame(dm@eigenvectors))),1:2]
+ggplot(dm_df, aes(DC1, DC2, col = seu@meta.data[rownames(dm_df), 'cell_type_fine']))+
+  geom_point(alpha = 1,shape = 16,size = 1.5) + theme_classic() + ggtitle('cell_type_fine')+
+  theme(legend.title = element_blank())
 
-palette(colBP)
-plot(dm, col = as.factor(es@phenoData@data$organ), main = 'organ', pch = 20)
-legend('bottomright', inset = c(-0.05, 0), legend = levels(as.factor(es@phenoData@data$organ)), pch = 16, 
-       col = as.factor(levels(as.factor(es@phenoData@data$organ))), bty = 'n')
+ggplot(dm_df,aes(DC1,DC2,col=seu@meta.data[rownames(dm_df),'sequencing']))+
+  geom_point(alpha = 1,shape=16,size=1.5) + theme_classic() +ggtitle('sequencing')+
+  theme(legend.title = element_blank())
 
-palette(colDC)
-plot(dm, col = as.factor(seu$cell_type_fine), main = 'cell_type_fine', pch = 20)
-legend('bottomright', inset = c(-0.05, -0.2), legend = levels(as.factor(seu$cell_type_fine)), pch = 16, 
-       col = as.factor(levels(as.factor(seu$cell_type_fine))), bty = 'n')
+ggplot(dm_df,aes(DC1,DC2,col=seu@meta.data[rownames(dm_df),'organ']))+
+  geom_point(alpha = 1,shape=16,size=1.5) + theme_classic() +ggtitle('organ')+
+  theme(legend.title = element_blank())
 
-par(mar = c(5.1, 4.1, 4.1, 7), xpd = TRUE)
-palette(viridis(100))
-plot(dm, col = es@phenoData@data$DC3_zilionis1, main = 'DC3_zilionis1', pch = 20)
-colorlegend(es@phenoData@data$DC3_zilionis1, viridis(length(es@phenoData@data$DC3_zilionis1)), 
-            posx = c(0.88, 0.9), posy = c(0, 0.65))
+ggplot(dm_df,aes(DC1,DC2,col=seu@meta.data[rownames(dm_df),'cDC11']))+
+  geom_point(alpha = 1,shape=16,size=1.5) + theme_classic() +ggtitle('cDC11')+
+  theme(legend.title = element_blank())+ scale_color_viridis()
+
+ggplot(dm_df,aes(DC1,DC2,col=seu@meta.data[rownames(dm_df),'cDC21']))+
+  geom_point(alpha = 1,shape=16,size=1.5) + theme_classic() +ggtitle('cDC21')+
+  theme(legend.title = element_blank())+ scale_color_viridis()
+
+ggplot(dm_df,aes(DC1,DC2,col=seu@meta.data[rownames(dm_df),'DC3_zilionis1']))+
+  geom_point(alpha = 1,shape=16,size=1.5) + theme_classic() +ggtitle('DC3_zilionis1')+
+  theme(legend.title = element_blank())+ scale_color_viridis()
+
+ggplot(dm_df,aes(DC1,DC2,col=seu@meta.data[rownames(dm_df),'Monocytes1']))+
+  geom_point(alpha = 1,shape=16,size=1.5) + theme_classic() +ggtitle('Monocytes1')+
+  theme(legend.title = element_blank())+ scale_color_viridis()
 dev.off()
 
 

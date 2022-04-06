@@ -1,0 +1,180 @@
+
+#Project Name
+#Use in pca, sample-sample, sample-feature plot. Please use "_" to seperate different words
+project: All_BrainvsAll_Peripheral
+
+#enhancer option enhancer/promoter/all
+enhancer: all
+
+#Location of metasheet
+metasheet: metasheet.csv
+ref: "scripts/ref.yaml"
+
+
+#Assembly is needed when seperate enhancer/promoter, motif finding, nearyby gene
+assembly: hg38
+
+
+#At least mini_num_sample should have RPKM > rpkm_threshold
+rpkm_threshold: 1
+mini_num_sample: 2
+
+
+#Scale method for the nomalize counts among samples
+#z- z-score
+#q- quantile-normalize
+#l- log-transform
+scale: q
+
+#Fliter metric in feature selection
+#sd- Standard deviation
+#cov- Coefficient of Variation 
+#av- mean
+filter-opt: cov 
+
+#top percent cutoff
+filter-percent: 20
+
+#limited of peaks to use for plot
+SSpeaks: 20000000
+SFpeaks: 20000000
+
+#number of k-means clustering in sample-feature plot
+num_kmeans_clust: 3
+
+#correlation method for sample-sample, sample-feature plot
+# "person" or "spearman"
+cor_method: 'pearson'
+
+#distance method for sample-sample, sample-feature plot
+# "euclidean", "manhattan", "canberra", "binary", "maximum" or "minkowski"
+dis_method: 'euclidean'
+
+#DEseq_cut_off - Padj/LG2FC
+Padj: 0.01
+LG2FC: 1
+
+#DEseq normalize method
+#def - normlize by default setting of DEseq2
+#depth - normlize by the sequence depth of each sample
+nor_method: 'def'
+
+#Motif analysis - true/false
+motif: 'true'
+
+#BAM files sorted? true/false
+bam_sort: 'false'
+
+#CNV correction? true/false
+CNV_correction: 'false'
+
+#unchanged heatmap
+unchanged_heatmap: 'false'
+
+#fastq as input
+fastq_in: 'false'
+
+#number of threads used in bwa mem 
+thread: 12
+
+# sample names, e.g. "sample01" "sample02" can be any abitrary string
+# HOWEVER, these names must match what is in metasheet.csv
+# FOR each sample, define the path to the fastq file
+
+fastq:
+   sample1:
+      - ./XX1_R1.fastq.gz
+   sample2:
+      - ./XX2_R1.fastq.gz
+   input:
+      - ./XX_input_R1.fastq.gz
+
+# bed, bam and bigwig is not needed when fastq_in is true
+
+bed:
+
+   P2686A: bam_bed_bw/bed/19-2686-A-ATAC_S19_L002_peaks.narrowPeak_chr.bed
+   P2686B: bam_bed_bw/bed/20-2686-B-ATAC_S20_L002_peaks.narrowPeak_chr.bed
+   P2686C: bam_bed_bw/bed/21-2686-C-ATAC_S21_L002_peaks.narrowPeak_chr.bed
+   mamel134A: bam_bed_bw/bed/22-mamel134-A-ATAC_S22_L002_peaks.narrowPeak_chr.bed
+   mamel134B: bam_bed_bw/bed/23-mamel134-B-ATAC_S23_L002_peaks.narrowPeak_chr.bed
+   mamel134C: bam_bed_bw/bed/24-mamel134-C-ATAC_S24_L002_peaks.narrowPeak_chr.bed
+   BI3A: bam_bed_bw/bed/1-BI3-A-ATAC_S1_L002_peaks.narrowPeak_chr.bed
+   BI3B: bam_bed_bw/bed/2-BI3-B-ATAC_S2_L002_peaks.narrowPeak_chr.bed
+   BI3C: bam_bed_bw/bed/3-BI3-C-ATAC_S3_L002_peaks.narrowPeak_chr.bed
+   BI5A: bam_bed_bw/bed/4-BI5-A-ATAC_S4_L002_peaks.narrowPeak_chr.bed
+   BI5B: bam_bed_bw/bed/5-BI5-B-ATAC_S5_L002_peaks.narrowPeak_chr.bed
+   BI5C: bam_bed_bw/bed/6-BI5-C-ATAC_S6_L002_peaks.narrowPeak_chr.bed
+   273LNA: bam_bed_bw/bed/7-273LN-A-ATAC_S7_L002_peaks.narrowPeak_chr.bed
+   273LNB: bam_bed_bw/bed/8-273LN-B-ATAC_S8_L002_peaks.narrowPeak_chr.bed
+   273LNC: bam_bed_bw/bed/9-273LN-C-ATAC_S9_L002_peaks.narrowPeak_chr.bed
+   273BMA: bam_bed_bw/bed/10-273BM-A-ATAC_S10_L002_peaks.narrowPeak_chr.bed
+   273BMB: bam_bed_bw/bed/11-273BM-B-ATAC_S11_L002_peaks.narrowPeak_chr.bed 
+   273BMC: bam_bed_bw/bed/12-273BM-C-ATAC_S12_L002_peaks.narrowPeak_chr.bed
+   4LNA: bam_bed_bw/bed/13-4LN-A-ATAC_S13_L002_peaks.narrowPeak_chr.bed
+   4LNB: bam_bed_bw/bed/14-4LN-B-ATAC_S14_L002_peaks.narrowPeak_chr.bed
+   4LNC: bam_bed_bw/bed/15-4LN-C-ATAC_S15_L002_peaks.narrowPeak_chr.bed
+   5B1A: bam_bed_bw/bed/16-5B1-A-ATAC_S16_L002_peaks.narrowPeak_chr.bed
+   5B1B: bam_bed_bw/bed/17-5B1-B-ATAC_S17_L002_peaks.narrowPeak_chr.bed
+   5B1C: bam_bed_bw/bed/18-5B1-C-ATAC_S18_L002_peaks.narrowPeak_chr.bed
+
+bam:
+
+   P2686A:  bam_bed_bw/bam/19-2686-A-ATAC_S19_L002_NoDupMTfiltered_chr.bam
+   P2686B: bam_bed_bw/bam/20-2686-B-ATAC_S20_L002_NoDupMTfiltered_chr.bam
+   P2686C: bam_bed_bw/bam/21-2686-C-ATAC_S21_L002_NoDupMTfiltered_chr.bam
+   mamel134A: bam_bed_bw/bam/22-mamel134-A-ATAC_S22_L002_NoDupMTfiltered_chr.bam
+   mamel134B: bam_bed_bw/bam/23-mamel134-B-ATAC_S23_L002_NoDupMTfiltered_chr.bam
+   mamel134C: bam_bed_bw/bam/24-mamel134-C-ATAC_S24_L002_NoDupMTfiltered_chr.bam
+   BI3A: bam_bed_bw/bam/1-BI3-A-ATAC_S1_L002_noDupMTfiltered_chr.bam
+   BI3B: bam_bed_bw/bam/2-BI3-B-ATAC_S2_L002_NoDupMTfiltered_chr.bam
+   BI3C: bam_bed_bw/bam/3-BI3-C-ATAC_S3_L002_NoDupMTfiltered_chr.bam
+   BI5A: bam_bed_bw/bam/4-BI5-A-ATAC_S4_L002_NoDupfiltered_chr.bam
+   BI5B: bam_bed_bw/bam/5-BI5-B-ATAC_S5_L002_nodupMTfiltered_chr.bam
+   BI5C: bam_bed_bw/bam/6-BI5-C-ATAC_S6_L002_NoDupMTfiltered_chr.bam
+   273LNA: bam_bed_bw/bam/7-273LN-A-ATAC_S7_L002_NoDupMTfiltered_chr.bam
+   273LNB: bam_bed_bw/bam/8-273LN-B-ATAC_S8_L002_NoDupMTfiltered_chr.bam
+   273LNC: bam_bed_bw/bam/9-273LN-C-ATAC_S9_L002_NoDupMTfiltered_chr.bam
+   273BMA: bam_bed_bw/bam/10-273BM-A-ATAC_S10_L002_NoDupMTfiltered_chr.bam 
+   273BMB: bam_bed_bw/bam/11-273BM-B-ATAC_S11_L002_NoDupMTfiltered_chr.bam
+   273BMC: bam_bed_bw/bam/12-273BM-C-ATAC_S12_L002_NoDupMTfiltered_chr.bam
+   4LNA: bam_bed_bw/bam/13-4LN-A-ATAC_S13_L002_NoDupMTfiltered_chr.bam  
+   4LNB: bam_bed_bw/bam/14-4LN-B-ATAC_S14_L002_NoDupMTfiltered_chr.bam
+   4LNC: bam_bed_bw/bam/15-4LN-C-ATAC_S15_L002_NoDupMTfiltered_chr.bam
+   5B1A: bam_bed_bw/bam/16-5B1-A-ATAC_S16_L002_NoDupMTfiltered_chr.bam  
+   5B1B: bam_bed_bw/bam/17-5B1-B-ATAC_S17_L002_NoDupMTfiltered_chr.bam
+   5B1C: bam_bed_bw/bam/18-5B1-C-ATAC_S18_L002_NoDupMTfiltered_chr.bam
+
+
+bigwig:
+
+   P2686A:  bam_bed_bw/bigwig/19-2686-A-ATAC_S19_L002_NoDupMTfiltered.bw
+   P2686B:  bam_bed_bw/bigwig/20-2686-B-ATAC_S20_L002_NoDupMTfiltered.bw
+   P2686C:  bam_bed_bw/bigwig/21-2686-C-ATAC_S21_L002_NoDupMTfiltered.bw
+   mamel134A:  bam_bed_bw/bigwig/22-mamel134-A-ATAC_S22_L002_NoDupMTfiltered.bw
+   mamel134B:  bam_bed_bw/bigwig/23-mamel134-B-ATAC_S23_L002_NoDupMTfiltered.bw
+   mamel134C:  bam_bed_bw/bigwig/24-mamel134-C-ATAC_S24_L002_NoDupMTfiltered.bw
+   BI3A:  bam_bed_bw/bigwig/1-BI3-A-ATAC_S1_L002_noDupMTfiltered.bw
+   BI3B:  bam_bed_bw/bigwig/2-BI3-B-ATAC_S2_L002_NoDupMTfiltered.bw
+   BI3C:  bam_bed_bw/bigwig/3-BI3-C-ATAC_S3_L002_NoDupMTfiltered.bw
+   BI5A:  bam_bed_bw/bigwig/4-BI5-A-ATAC_S4_L002_NoDupfiltered.bw
+   BI5B:  bam_bed_bw/bigwig/5-BI5-B-ATAC_S5_L002_nodupMTfiltered.bw
+   BI5C: bam_bed_bw/bigwig/6-BI5-C-ATAC_S6_L002_NoDupMTfiltered.bw
+   273LNA: bam_bed_bw/bigwig/7-273LN-A-ATAC_S7_L002_NoDupMTfiltered.bw
+   273LNB: bam_bed_bw/bigwig/8-273LN-B-ATAC_S8_L002_NoDupMTfiltered.bw
+   273LNC: bam_bed_bw/bigwig/9-273LN-C-ATAC_S9_L002_NoDupMTfiltered.bw
+   273BMA: bam_bed_bw/bigwig/10-273BM-A-ATAC_S10_L002_NoDupMTfiltered.bw
+   273BMB: bam_bed_bw/bigwig/11-273BM-B-ATAC_S11_L002_NoDupMTfiltered.bw
+   273BMC: bam_bed_bw/bigwig/12-273BM-C-ATAC_S12_L002_NoDupMTfiltered.bw
+   4LNA: bam_bed_bw/bigwig/13-4LN-A-ATAC_S13_L002_NoDupMTfiltered.bw
+   4LNB: bam_bed_bw/bigwig/14-4LN-B-ATAC_S14_L002_NoDupMTfiltered.bw
+   4LNC: bam_bed_bw/bigwig/15-4LN-C-ATAC_S15_L002_NoDupMTfiltered.bw
+   5B1A: bam_bed_bw/bigwig/16-5B1-A-ATAC_S16_L002_NoDupMTfiltered.bw
+   5B1B: bam_bed_bw/bigwig/17-5B1-B-ATAC_S17_L002_NoDupMTfiltered.bw
+   5B1C: bam_bed_bw/bigwig/18-5B1-C-ATAC_S18_L002_NoDupMTfiltered.bw
+
+
+# tab-separated cnv files
+cnv:
+   sample1: ./XX1.igv
+   sample2: ./XX2.igv

@@ -1,0 +1,17 @@
+# Ignore all emacs backup files
+*~
+
+# Ignore hidden files
+*.Rhistory
+*.DS_Store
+*._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Don't ignore .gitignore
+!/.gitignore
+!.gitignore
+!.git
+!.gitconfig

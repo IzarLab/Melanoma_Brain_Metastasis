@@ -1,0 +1,25 @@
+name,patient ,organ
+BI3-A,BI3,zbrain
+BI3-B,BI3,zbrain
+BI3-C,BI3,zbrain
+BI5-A,BI5,zbrain
+BI5-B,BI5,zbrain
+BI5-C,BI5,zbrain
+273LN-A,273,peripheral
+273LN-B,273,peripheral
+273LN-C,273,peripheral
+273BM-A,273,zbrain
+273BM-B,273,zbrain
+273BM-C,273,zbrain
+4LN-A,45,peripheral
+4LN-B,45,peripheral
+4LN-C,45,peripheral
+5B1-A,45,zbrain
+5B1-B,45,zbrain
+5B1-C,45,zbrain
+2686-A,2686,peripheral
+2686-B,2686,peripheral
+2686-C,2686,peripheral
+mamel134-A,mamel134,peripheral
+mamel134-B,mamel134,peripheral
+mamel134-C,mamel134,peripheral

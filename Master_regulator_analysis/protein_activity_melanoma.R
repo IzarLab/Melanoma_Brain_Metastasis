@@ -1,7 +1,7 @@
 
 # Author: Somnath Tagore, Ph.D. Title: Master Regulator Analysis of Melanoma data 
 # Script Name: protein_activity_melanoma.R 
-# Last Updated: 09/24/2021
+# Last Updated: 03/19/2022
 
 # Packages required for this analysis
 formatR::tidy_app()
@@ -44,7 +44,7 @@ ClusterColors <- function(k, offset = 0) {
 }
 
 #Read tumor data for each sample
-#Here, each sample correspond to categoris MBM/MPM
+#Here, each sample correspond to categories MBM/MPM
 #An example snippet is given below. Please change the sample names ('sample_id') as required.
 
 sample_id <- 'MPM05_sn.rds'
@@ -74,8 +74,156 @@ dim(signature_int)
 signature_int <- na.omit(signature_int)
 saveRDS(signature_int,file="data_tumor_all_internal_reference_signature.rds")
 
+# Prepare consensus network using all available sample-specific networks
+
+#' This function generate the consensus network from a list of networks
+#' @param  network.list A list of networks
+#' @param weights A verctor whose length is equal to the length of network.list.  The weights are the number of samples/cells used to reverse-engineer each of the individual networks.
+
+# read all pruned networks (per sample)
+MPM05_sn.network <- readRDS(file="MPM05_sn_all_prot_pruned.rds")
+
+# make a list for all network objects
+network.list <- list(PA001.network)
+
+# define weights per network
+weights <- c( )
+
+GetConsensusNet<-function(network.list, weights){
+  regulon <- network.list
+  regulators <- lapply(regulon, function(x) {
+    pos <- names(x)
+    return(pos)
+  })
+  
+  regulators<-sort(unique(unname(unlist(regulators))))
+  
+  #---add the regulators to the regulon
+  
+  
+  regulon.consensus<-list()
+  
+  
+  for (regulator in regulators){
+    
+    print(regulator)
+    
+    regulator.regulon<-list(tfmode=NA, likelihood=NA)
+    
+    
+    
+    # regulator<-"ITPK1"
+    
+    targets<- lapply(regulon, FUN=function(x, regulator){
+      
+      tmp<-match(regulator, names(x))
+      
+      names<-names(x[[tmp]]$tfmode)
+      
+      return(names)
+      
+    }, regulator=regulator)
+    
+    
+    targets<-sort(unique(unname(unlist(targets))))
+    
+    
+    
+    
+    for(target in targets){
+      
+      
+      target.stat<-lapply(regulon, FUN=function(x, regulator, target){
+        
+        tmp<-match(regulator, names(x))
+        
+        id<-names(x[[tmp]]$tfmode)%in%target
+        
+        
+        stat<-c(x[[tmp]]$tfmode[id], x[[tmp]]$likelihood[id])
+        
+        
+        
+      }, regulator=regulator, target=target)
+      
+      
+      
+      
+      Target.Stat.Consensus<-function(target.stat, weight){
+        
+        tmp.mat<-matrix(0, ncol=2, nrow=length(regulon))
+        
+        colnames(tmp.mat)<-c("tfmode", "likelihood")
+        
+        
+        for (i in 1:length(target.stat)){
+          
+          
+          tmp<-target.stat[[i]]
+          
+          if(length(tmp)==2) tmp.mat[i, ]<-tmp
+          
+        }
+        
+        
+        tmp.dat<-as.data.frame(tmp.mat)
+        
+        tfmode.consensus<-sum(tmp.dat$tfmode*weights)/sum(weights)
+        names(tfmode.consensus)<-target
+        
+        
+        
+        likelihood.consensus<-sum(tmp.dat$likelihood*weights)/sum(weights)
+        
+        return(c(tfmode.consensus, likelihood.consensus))
+        
+      }
+      
+      
+      target.stat.consensus<- Target.Stat.Consensus(target.stat)
+      
+      
+      
+      if (target.stat.consensus[2]==0) next
+      
+      
+      if(is.na(regulator.regulon$tfmode)==TRUE){
+        
+        regulator.regulon$tfmode<-target.stat.consensus[1]}else{
+          
+          regulator.regulon$tfmode<-c(regulator.regulon$tfmode, target.stat.consensus[1])
+          
+        }
+      
+      
+      if(is.na(regulator.regulon$likelihood)==TRUE){
+        
+        regulator.regulon$likelihood<-target.stat.consensus[2]}else{
+          
+          regulator.regulon$likelihood<-c(regulator.regulon$likelihood, target.stat.consensus[2])
+          
+        }
+      
+    }
+    
+    regulator.regulon<-list( regulator.regulon)
+    
+    names(regulator.regulon)<-regulator
+    
+    regulon.consensus<-append(regulon.consensus, regulator.regulon)
+    
+  }
+  
+  
+  return(regulon.consensus)
+  
+}
+
+consensus.network <- GetConsensusNet(network.list = network.list,weights=weights)
+length(consensus.network)
+
 #Protein activity prediction using VIPER
-data_tumor_all_internal_reference_vpmat <- viper(eset = signature_int, regulon = as.list(sample_id_regulon_1,sample_id_regulon_2), method = "none")
+data_tumor_all_internal_reference_vpmat <- viper(eset = signature_int, regulon = consensus.network, method = "none")
 saveRDS(data_tumor_all_internal_reference_vpmat,file="data_tumor_all_internal_reference_vpmat.rds")
 
 #Clustering based on protein activity

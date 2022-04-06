@@ -1,0 +1,665 @@
+---
+title: "davies_2019-htseq-edger"
+output: html_document
+---
+
+Data from: Cancer Discov (2019) 9 (5): 628–645. Fischer ... Davies et al
+"Molecular Profiling Reveals Unique Immune and Metabolic Features of Melanoma Brain Metastases" 
+RNA-sequencing data downloaded as .bams from the European Genome-Phenome Archive: 
+login ega-archive.org
+Data set ID EGAD00001005046; Study ID EGAS00001003672
+Data set description: The BAM files for WES and RNA seq used in the article "Molecular Profiling Reveals Unique Immune and Metabolic Features of Melanoma Brain Metastases." on cancer Discovery 2019. PMID: 30787016 PMCID: PMC6497554. Authors : Grant M Fischer, ..., Michael A Davies.
+
+###IMPORTANT: these 3 samples were missing from EGA download. 
+RNA12838.bam -- NBM skin from 20735 
+RNA128177.bam -- BM-1 from same patient 22193
+RNA127786.bam -- BM-2 from same patient 22193
+
+You will see as you read on that 1 sample does not pass quality controls, having a library of only 3 million reads: 
+"RNA128120"
+
+###########Relevant Excerpts from Supplementary Methods of Cancer Discovery paper: 
+"Illumina sequencing for clinical FFPE specimens[...]. Pooled libraries were normalized to 2 nM and denatured using 0.1 N NaOH prior to sequencing at the Broad Institute. Flowcell cluster amplification and sequencing were performed according to the manufacturer’s protocols using HiSeq 2500. Each run was a 76-bp paired-end with an eight-base index barcode read. Data was analyzed using the Broad Picard Pipeline which includes de-multiplexing and data aggregation."
+
+"H&E-stained slides were prepared from patient-derived MBM and extracranial metastasis FFPE tissue blocks and reviewed by a pathologist. Regions containing 70% or more viable tumor cells were identified. The marked H&E slide was used to guide macrodissection of the matched tissue block. Extraction of RNA from the isolated tissue occurred via the Roche High Pure miRNA Kit, according to previously published methods. RNA was extracted from the tumor samples after pathologic assessment and confirmation of tumor content. RNA-seq was performed at the Broad Institute and the University of Utah Huntsman Cancer Center. Data acquisition and analyses are fully described in Supplementary Methods. Raw sequencing reads are available as controlled access via the European Genome–Phenome Archive (EGA; accession number EGAS00001003672) to safeguard patient privacy."
+
+"Count matrix generation. HTSeq-count (v0.9.1) tool (4) was applied with its default settings to
+aligned RNA-seq BAM files from the Broad Institute (except A375, A375-R1, MEWO, and
+WM1361A xenografts) to count uniquely aligned reads overlapping features in the GTF file, and
+featureCounts (v1.5.1) was applied with its default settings to the aligned RNA-seq BAM files
+generated at the University of Utah Health Sciences Center. Samples with less than 10 million
+uniquely mapped reads were excluded from further analyses. Only Entrez genes were included in
+further analyses."
+
+"Clustering analyses of clinical FFPE samples. MBMs with median transcript counts of 0 (n=10)
+were excluded from further analyses. The normalized expression of the 88 remaining samples was
+estimated in fragments per kilobase of exon per million fragments mapped (FPKM). For better
+visualization of the heatmap, log2-transformed (FPKM+1) values were calculated for all genes of
+the 88 samples."
+
+"ECMs with median transcript counts of 0 (n=4) were excluded from further analyses. The trimmed
+mean of M values (TMM) normalization procedure from the EdgeR package in R (v3.3.3)
+was used to normalize transcript counts from the remaining 35 MBMs and 42 ECMs from the
+same 29 patients. Following voom transformation, the log2-transformed counts per million+0.5
+(CPM+0.5) values of the 500 most variable Entrez genes were median centered. Hierarchical
+clustering was conducted with distances calculated using 1-correlation metrics and clusters joined
+using Ward.D2 linkage. The clustering diagram was generated in R."
+
+"Identification of differentially expressed genes (DEGs). Counts were normalized using the TMM
+method and generalized linear models were used for differential expression analysis.
+Comparisons of interest were performed using functions from the edgeR and limma/voom
+Bioconductor packages in R. DEGs were defined as those genes with a 
+Benjamini-Hochberg corrected p value less than 0.05."
+
+#############From description of Supplementary Table 2 of Cancer Discovery paper: 
+"Table S2: Differentially Expressed Genes in Patient-Matched Melanoma Brain and Extracranial Metastases. Comprehensive list of the 494 differentially expressed genes (adjusted p&lt;0.05) between 35 MBMs and 42 patient-matched ECMs (from 29 patients). Results acquired via EdgeR-limma-voom R packages. Gene names are listed according to HGNC nomenclature. "Log2FC" is the estimate of the log2-fold-change of the gene in MBMs relative to patient-matched ECMs. "AveExr" is the average log2-expression for the gene across all samples. "t" is the moderated t-statistic. "P.Value" is the nominal p-value. "Adj.P.Val" is the p-value corrected for multiple testing via Benjamini-Hochberg procedure. "B" is the log-odds that the gene is differentially expressed."
+
+
+
+
+############################################################################
+
+
+####BEGIN CODE USED TO ANALYZE DATA FROM EGA BY ALCIDA KARZ, NYU LANGONE#### 
+############################################################################
+
+#First, in linux on NYU BigPurple High-Performance Computing Cluster: create conda environment with necessary packages 
+
+```{r}
+conda create -n myenvhtseq2 samtools htseq
+cd #(to directory with .bams)
+conda activate myenvhtseq2
+
+```
+
+##Bash script used in linux on NYU BigPurple High-Performance Computing Cluster to sort .bams with samtools 
+```{r}
+#!/bin/bash -l
+#SBATCH --partition cpu_short
+#SBATCH --mem 100G
+#SBATCH --time 3-00:00:00
+#SBATCH --job-name sort_pt2
+#SBATCH --cores 16
+#SBATCH -e sort_pt2.err
+#SBATCH -o sort_pt2.out
+
+cd /gpfs/data/ruggleslab/genomics/hernando/ega-download #where bams are stored 
+
+for file in $(ls *.bam);
+do
+    echo "Sorting $file"
+    samtools sort -n -o $file.sorted.bam $file 
+
+done
+
+```
+
+##Bash script used in linux on NYU BigPurple High-Performance Computing Cluster for counting reads with htseq 
+
+```{r}
+
+#!/bin/bash -l
+#SBATCH --partition cpu_short
+#SBATCH --mem 100G
+#SBATCH --time 3-00:00:00
+#SBATCH --job-name allie_count4
+#SBATCH --cores 16
+#SBATCH -e allie_count_htseq.err
+#SBATCH -o allie_count_htseq.out
+
+
+files=" RNA127681.bam.sorted	RNA127682.bam.sorted	RNA127683.bam.sorted	RNA127684.bam.sorted	RNA127685.bam.sorted	RNA127686.bam.sorted	RNA127702.bam.sorted	RNA127703.bam.sorted	RNA127704.bam.sorted	RNA127705.bam.sorted	RNA127706.bam.sorted	RNA127707.bam.sorted	RNA127708.bam.sorted	RNA127710.bam.sorted	RNA127721.bam.sorted	RNA127722.bam.sorted	RNA127723.bam.sorted	RNA127724.bam.sorted	RNA127725.bam.sorted	RNA127726.bam.sorted	RNA127727.bam.sorted	RNA127728.bam.sorted	RNA127729.bam.sorted	RNA127742.bam.sorted	RNA127743.bam.sorted	RNA127744.bam.sorted	RNA127745.bam.sorted	RNA127746.bam.sorted	RNA127747.bam.sorted	RNA127748.bam.sorted	RNA127749.bam.sorted	RNA127750.bam.sorted	RNA127751.bam.sorted	RNA127762.bam.sorted	RNA127763.bam.sorted	RNA127764.bam.sorted	RNA127765.bam.sorted	RNA127766.bam.sorted	RNA127767.bam.sorted	RNA127769.bam.sorted	RNA127770.bam.sorted	RNA127771.bam.sorted	RNA127782.bam.sorted	RNA127783.bam.sorted	RNA127784.bam.sorted	RNA127786.bam.sorted	RNA127787.bam.sorted	RNA127788.bam.sorted	RNA127789.bam.sorted	RNA127790.bam.sorted	RNA127791.bam.sorted	RNA127900.bam.sorted	RNA127901.bam.sorted	RNA127902.bam.sorted	RNA127903.bam.sorted	RNA127904.bam.sorted	RNA127905.bam.sorted	RNA127906.bam.sorted	RNA127907.bam.sorted	RNA127908.bam.sorted	RNA128031.bam.sorted	RNA128032.bam.sorted	RNA128033.bam.sorted	RNA128034.bam.sorted	RNA128035.bam.sorted	RNA128036.bam.sorted	RNA128037.bam.sorted	RNA128038.bam.sorted	RNA128039.bam.sorted	RNA128113.bam.sorted	RNA128114.bam.sorted	RNA128115.bam.sorted	RNA128116.bam.sorted	RNA128117.bam.sorted	RNA128118.bam.sorted	RNA128119.bam.sorted	RNA128120.bam.sorted	RNA128121.bam.sorted	RNA128122.bam.sorted	RNA128133.bam.sorted	RNA128134.bam.sorted	RNA128136.bam.sorted	RNA128137.bam.sorted	RNA128138.bam.sorted	RNA128139.bam.sorted	RNA128140.bam.sorted	RNA128141.bam.sorted	RNA128142.bam.sorted	RNA128153.bam.sorted	RNA128155.bam.sorted	RNA128156.bam.sorted	RNA128157.bam.sorted	RNA128158.bam.sorted	RNA128159.bam.sorted	RNA128160.bam.sorted	RNA128161.bam.sorted	RNA128162.bam.sorted	RNA128173.bam.sorted	RNA128174.bam.sorted	RNA128175.bam.sorted	RNA128176.bam.sorted	RNA128177.bam.sorted	RNA128178.bam.sorted	RNA128179.bam.sorted	RNA128180.bam.sorted	RNA128181.bam.sorted	RNA128191.bam.sorted	RNA128192.bam.sorted	RNA128193.bam.sorted	RNA128194.bam.sorted	RNA128195.bam.sorted	RNA128196.bam.sorted	RNA128197.bam.sorted	RNA128198.bam.sorted	RNA128199.bam.sorted	RNA128200.bam.sorted	RNA128219.bam.sorted	RNA128220.bam.sorted	RNA128221.bam.sorted	RNA128222.bam.sorted	RNA128223.bam.sorted	RNA128224.bam.sorted	RNA128225.bam.sorted	RNA128226.bam.sorted	RNA128227.bam.sorted	RNA128228.bam.sorted	RNA128239.bam.sorted	RNA128240.bam.sorted	RNA128241.bam.sorted	RNA128242.bam.sorted	RNA128243.bam.sorted	RNA128244.bam.sorted	RNA128246.bam.sorted	RNA128247.bam.sorted	RNA128248.bam.sorted	RNA128259.bam.sorted	RNA128261.bam.sorted	RNA128262.bam.sorted "
+
+for file in $files;
+do
+
+   echo "Counting $file"
+samtools view $file.bam | htseq-count --format=bam --stranded=reverse -i gene_id $file.bam /gpfs/data/ruggleslab/genomics/hernando/ega-download/Ensembl_GrCH37/Homo_sapiens.GRCh37.87.gtf > $file-3713ensemblrev.txt > $file-counts.txt ;
+
+done
+
+```
+
+#######################################
+#The following analysis was done in R: 
+
+sessionInfo()
+R version 4.0.0 (2020-04-24)
+Platform: x86_64-conda_cos6-linux-gnu (64-bit)
+Running under: Red Hat Enterprise Linux
+
+attached base packages:
+[1] parallel  stats4    stats     graphics  grDevices utils     datasets 
+[8] methods   base     
+
+other attached packages:
+ [1] org.Hs.eg.db_3.11.1  GO.db_3.11.1         AnnotationDbi_1.50.0
+ [4] IRanges_2.22.1       S4Vectors_0.26.0     Biobase_2.48.0      
+ [7] BiocGenerics_0.34.0  lubridate_1.7.8      biomaRt_2.44.0      
+[10] ggrepel_0.8.2        plyr_1.8.6           forcats_0.5.0       
+[13] stringr_1.4.0        dplyr_0.8.5          purrr_0.3.4         
+[16] readr_1.3.1          tidyr_1.0.3          tibble_3.0.1        
+[19] ggplot2_3.3.0        tidyverse_1.3.0      statmod_1.4.34      
+[22] edgeR_3.30.0         limma_3.44.1        
+
+loaded via a namespace (and not attached):
+ [1] httr_1.4.1           bit64_0.9-7          jsonlite_1.6.1      
+ [4] modelr_0.1.7         assertthat_0.2.1     askpass_1.1         
+ [7] BiocManager_1.30.10  BiocFileCache_1.12.0 blob_1.2.1          
+[10] cellranger_1.1.0     progress_1.2.2       pillar_1.4.4        
+[13] RSQLite_2.2.0        backports_1.1.7      lattice_0.20-41     
+[16] glue_1.4.1           digest_0.6.25        rvest_0.3.5         
+[19] colorspace_1.4-1     XML_3.99-0.3         pkgconfig_2.0.3     
+[22] broom_0.5.6          haven_2.2.0          scales_1.1.1        
+[25] openssl_1.4.1        generics_0.0.2       ellipsis_0.3.0      
+[28] withr_2.2.0          cli_2.0.2            magrittr_1.5        
+[31] crayon_1.3.4         readxl_1.3.1         memoise_1.1.0       
+[34] fs_1.4.1             fansi_0.4.1          nlme_3.1-147        
+[37] xml2_1.3.2           tools_4.0.0          prettyunits_1.1.1   
+[40] hms_0.5.3            lifecycle_0.2.0      munsell_0.5.0       
+[43] reprex_0.3.0         locfit_1.5-9.4       compiler_4.0.0      
+[46] rlang_0.4.6          grid_4.0.0           rstudioapi_0.11     
+[49] rappdirs_0.3.1       gtable_0.3.0         DBI_1.1.0           
+[52] curl_4.3             R6_2.4.1             bit_1.1-15.2        
+[55] stringi_1.4.6        Rcpp_1.0.4.6         vctrs_0.3.0         
+[58] dbplyr_1.4.3         tidyselect_1.1.0    
+
+
+
+```{r setup, include=FALSE}
+
+##load dependencies 
+
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("edgeR", dependencies = TRUE, force = TRUE)
+
+if (!requireNamespace("BiocManager", quietly = TRUE))
+  install.packages("BiocManager", repos = "http://cran.us.r-project.org")
+
+BiocManager::install("GO.db")
+
+library(GO.db)
+
+if (!requireNamespace("BiocManager", quietly = TRUE))
+  install.packages("BiocManager", repos = "http://cran.us.r-project.org")
+
+BiocManager::install("org.Hs.eg.db")
+
+library(org.Hs.eg.db)
+
+library(edgeR)
+library(statmod)
+library(tidyverse)
+library(readr)
+library(dplyr)
+library(plyr)
+library(ggplot2)
+library(ggrepel)
+library( "biomaRt" )
+library(lubridate)
+library(purrr)
+
+
+```
+
+#Counts matrices for each sample are in the working directory 
+## File names of 135 samples: 
+
+RNA128178.bam.sorted-3713ensemblrev.txt
+RNA128179.bam.sorted-3713ensemblrev.txt
+RNA128180.bam.sorted-3713ensemblrev.txt
+RNA128181.bam.sorted-3713ensemblrev.txt
+RNA128191.bam.sorted-3713ensemblrev.txt
+RNA128192.bam.sorted-3713ensemblrev.txt
+RNA128193.bam.sorted-3713ensemblrev.txt
+RNA128194.bam.sorted-3713ensemblrev.txt
+RNA128195.bam.sorted-3713ensemblrev.txt
+RNA128196.bam.sorted-3713ensemblrev.txt
+RNA128197.bam.sorted-3713ensemblrev.txt
+RNA128198.bam.sorted-3713ensemblrev.txt
+RNA128199.bam.sorted-3713ensemblrev.txt
+RNA128200.bam.sorted-3713ensemblrev.txt
+RNA128219.bam.sorted-3713ensemblrev.txt
+RNA128220.bam.sorted-3713ensemblrev.txt
+RNA128221.bam.sorted-3713ensemblrev.txt
+RNA128222.bam.sorted-3713ensemblrev.txt
+RNA128223.bam.sorted-3713ensemblrev.txt
+RNA128224.bam.sorted-3713ensemblrev.txt
+RNA128225.bam.sorted-3713ensemblrev.txt
+RNA128226.bam.sorted-3713ensemblrev.txt
+RNA128227.bam.sorted-3713ensemblrev.txt
+RNA128228.bam.sorted-3713ensemblrev.txt
+RNA128239.bam.sorted-3713ensemblrev.txt
+RNA128240.bam.sorted-3713ensemblrev.txt
+RNA128241.bam.sorted-3713ensemblrev.txt
+RNA128242.bam.sorted-3713ensemblrev.txt
+RNA128243.bam.sorted-3713ensemblrev.txt
+RNA128244.bam.sorted-3713ensemblrev.txt
+RNA128246.bam.sorted-3713ensemblrev.txt
+RNA128247.bam.sorted-3713ensemblrev.txt
+RNA128248.bam.sorted-3713ensemblrev.txt
+RNA128259.bam.sorted-3713ensemblrev.txt
+RNA128261.bam.sorted-3713ensemblrev.txt
+RNA128262.bam.sorted-3713ensemblrev.txt
+RNA127908.bam.sorted-3713ensemblrev.txt
+RNA128031.bam.sorted-3713ensemblrev.txt
+RNA128032.bam.sorted-3713ensemblrev.txt
+RNA128033.bam.sorted-3713ensemblrev.txt
+RNA128034.bam.sorted-3713ensemblrev.txt
+RNA128035.bam.sorted-3713ensemblrev.txt
+RNA128036.bam.sorted-3713ensemblrev.txt
+RNA128037.bam.sorted-3713ensemblrev.txt
+RNA128038.bam.sorted-3713ensemblrev.txt
+RNA128039.bam.sorted-3713ensemblrev.txt
+RNA128113.bam.sorted-3713ensemblrev.txt
+RNA128114.bam.sorted-3713ensemblrev.txt
+RNA128115.bam.sorted-3713ensemblrev.txt
+RNA128116.bam.sorted-3713ensemblrev.txt
+RNA128117.bam.sorted-3713ensemblrev.txt
+RNA128118.bam.sorted-3713ensemblrev.txt
+RNA128119.bam.sorted-3713ensemblrev.txt
+RNA128120.bam.sorted-3713ensemblrev.txt
+RNA128121.bam.sorted-3713ensemblrev.txt
+RNA128122.bam.sorted-3713ensemblrev.txt
+RNA128133.bam.sorted-3713ensemblrev.txt
+RNA128134.bam.sorted-3713ensemblrev.txt
+RNA128136.bam.sorted-3713ensemblrev.txt
+RNA128137.bam.sorted-3713ensemblrev.txt
+RNA128139.bam.sorted-3713ensemblrev.txt
+RNA128140.bam.sorted-3713ensemblrev.txt
+RNA128141.bam.sorted-3713ensemblrev.txt
+RNA128142.bam.sorted-3713ensemblrev.txt
+RNA128153.bam.sorted-3713ensemblrev.txt
+RNA128155.bam.sorted-3713ensemblrev.txt
+RNA128156.bam.sorted-3713ensemblrev.txt
+RNA128157.bam.sorted-3713ensemblrev.txt
+RNA128158.bam.sorted-3713ensemblrev.txt
+RNA128159.bam.sorted-3713ensemblrev.txt
+RNA128160.bam.sorted-3713ensemblrev.txt
+RNA128161.bam.sorted-3713ensemblrev.txt
+RNA128162.bam.sorted-3713ensemblrev.txt
+RNA128173.bam.sorted-3713ensemblrev.txt
+RNA128174.bam.sorted-3713ensemblrev.txt
+RNA128175.bam.sorted-3713ensemblrev.txt
+RNA128176.bam.sorted-3713ensemblrev.txt
+RNA127703.bam.sorted-3713ensemblrev.txt
+RNA127704.bam.sorted-3713ensemblrev.txt
+RNA127705.bam.sorted-3713ensemblrev.txt
+RNA127706.bam.sorted-3713ensemblrev.txt
+RNA127707.bam.sorted-3713ensemblrev.txt
+RNA127708.bam.sorted-3713ensemblrev.txt
+RNA127710.bam.sorted-3713ensemblrev.txt
+RNA127721.bam.sorted-3713ensemblrev.txt
+RNA127722.bam.sorted-3713ensemblrev.txt
+RNA127723.bam.sorted-3713ensemblrev.txt
+RNA127724.bam.sorted-3713ensemblrev.txt
+RNA127725.bam.sorted-3713ensemblrev.txt
+RNA127726.bam.sorted-3713ensemblrev.txt
+RNA127727.bam.sorted-3713ensemblrev.txt
+RNA127728.bam.sorted-3713ensemblrev.txt
+RNA127729.bam.sorted-3713ensemblrev.txt
+RNA127742.bam.sorted-3713ensemblrev.txt
+RNA127743.bam.sorted-3713ensemblrev.txt
+RNA127744.bam.sorted-3713ensemblrev.txt
+RNA127745.bam.sorted-3713ensemblrev.txt
+RNA127746.bam.sorted-3713ensemblrev.txt
+RNA127747.bam.sorted-3713ensemblrev.txt
+RNA127748.bam.sorted-3713ensemblrev.txt
+RNA127749.bam.sorted-3713ensemblrev.txt
+RNA127750.bam.sorted-3713ensemblrev.txt
+RNA127751.bam.sorted-3713ensemblrev.txt
+RNA127762.bam.sorted-3713ensemblrev.txt
+RNA127763.bam.sorted-3713ensemblrev.txt
+RNA127764.bam.sorted-3713ensemblrev.txt
+RNA127765.bam.sorted-3713ensemblrev.txt
+RNA127766.bam.sorted-3713ensemblrev.txt
+RNA127767.bam.sorted-3713ensemblrev.txt
+RNA127769.bam.sorted-3713ensemblrev.txt
+RNA127770.bam.sorted-3713ensemblrev.txt
+RNA127771.bam.sorted-3713ensemblrev.txt
+RNA127782.bam.sorted-3713ensemblrev.txt
+RNA127783.bam.sorted-3713ensemblrev.txt
+RNA127784.bam.sorted-3713ensemblrev.txt
+RNA127787.bam.sorted-3713ensemblrev.txt
+RNA127788.bam.sorted-3713ensemblrev.txt
+RNA127789.bam.sorted-3713ensemblrev.txt
+RNA127790.bam.sorted-3713ensemblrev.txt
+RNA127791.bam.sorted-3713ensemblrev.txt
+RNA127900.bam.sorted-3713ensemblrev.txt
+RNA127901.bam.sorted-3713ensemblrev.txt
+RNA127902.bam.sorted-3713ensemblrev.txt
+RNA127903.bam.sorted-3713ensemblrev.txt
+RNA127904.bam.sorted-3713ensemblrev.txt
+RNA127905.bam.sorted-3713ensemblrev.txt
+RNA127906.bam.sorted-3713ensemblrev.txt
+RNA127907.bam.sorted-3713ensemblrev.txt
+RNA127681.bam.sorted-3713ensemblrev.txt
+RNA127682.bam.sorted-3713ensemblrev.txt
+RNA127683.bam.sorted-3713ensemblrev.txt
+RNA127684.bam.sorted-3713ensemblrev.txt
+RNA127685.bam.sorted-3713ensemblrev.txt
+RNA127686.bam.sorted-3713ensemblrev.txt
+RNA127702.bam.sorted-3713ensemblrev.txt
+
+
+
+#Import counts tables, combine them, and remove genes below a threshold of expression 
+```{r, fig.width = 6, fig.height = 4}
+
+## all count matrices exist in the working directory with .txt file type 
+## want to clean them and then combine into single matrix 
+
+setwd("/Users/ajk669/Dropbox (NYU Langone Health)/Bioinformatics_projects/MBM-Davies-Kevin/bigpurple/htseq/htseq_final_counts")
+
+all_count_files <- list.files(path = "/Users/ajk669/Dropbox (NYU Langone Health)/Bioinformatics_projects/MBM-Davies-Kevin/bigpurple/htseq/htseq_final_counts", pattern = "*.txt", full.names = TRUE)
+list_countfiles <- list()
+
+cols <- c("gene", "count")
+
+#Read in count tables 
+for (file in all_count_files) {
+  list_countfiles[[file]] <- try(read.table(file, stringsAsFactors = FALSE, fill = TRUE, sep = "\t"))
+}
+
+#Change column names
+for (i in 1:length(list_countfiles)) {
+names(list_countfiles[[i]]) <- paste(names(list_countfiles[[i]]), names(list_countfiles[i]), sep = "_")
+}
+
+list_countfiles <-
+  lapply(names(list_countfiles), function(i){
+  x <- list_countfiles[[i]]
+  # set 2nd column to a new name
+  names(x)[1] <- "gene"
+  # return
+  x
+})
+
+#Join into one matrix 
+htseqcounts3 <- list_countfiles %>% 
+  reduce(left_join, by = "gene")
+
+head(htseqcounts3)
+
+write.csv(htseqcounts3, "htseqcounts3.csv")
+
+rownames(htseqcounts3) <- make.names(htseqcounts3[,1], unique=TRUE)
+htseqcounts3$rowmean <- rowMeans(htseqcounts3[,2:ncol(htseqcounts3)])
+
+#Remove non-unique reads 
+nonun <- c("__alignment_not_unique", "__ambiguous", "__no_feature")
+htseqcounts3 <- htseqcounts3 %>% filter(!gene %in% nonun)
+
+#Check range for a reasonable cutoff of rowmeans (average reads for a given transcript across samples)
+range(htseqcounts3$rowmean) #0 4038695
+htseqcounts3 <- htseqcounts3[order(-htseqcounts3$rowmean),]
+head(htseqcounts3$rowmean)
+
+##Fischer paper removes samples with 0 median transcript count but doesn't say which 
+meds <- data.frame(apply(htseqcounts3,2,median))
+## All samples have a median transcript count of 0, moving on to assess library size overall 
+
+```
+##Assess library size: while Fischer paper removes libraries < 10 million reads, there are 3 libraries that don't meet that threshold in my analysis; 
+Without those 3, the n does not match the n used for DE analysis in the Fischer paper. 
+We will just remove one library which has 3e6 reads; the other 2 are close to 1e7 reads. 
+
+```{r, fig.width = 6, fig.height = 4}
+
+##Fischer paper removes samples with less than 10 million uniquely mapped reads 
+
+reads <- data.frame(apply(htseqcounts3[,c(2:ncol(htseqcounts3))], 2, sum))
+names(reads) <- "unique_reads_total"
+
+plot <- ggplot(data = reads, mapping=aes(x = rownames(reads), y = unique_reads_total)) + 
+  geom_bar(stat="identity") + 
+ geom_hline(yintercept=10000000) + 
+  xlab("RNA Seq Library") + 
+  ylab("Library Size (# Uniquely Mapped Reads)") + 
+  theme(axis.text.x = element_blank())
+plot
+ggsave(plot, filename = "htseq_librarysizes.pdf", height = 4, width = 8)
+
+#Which samples are below 10 million reads threshold? 
+
+s <- filter(reads, unique_reads_total < 10000000) 
+#RNA127765 #9151940
+#RNA127769 #9071289
+#RNA128120 #3488046
+
+#Will use 9 million read threshold and just remove sample #RNA128120
+
+#Remove sample RNA12820
+counts4 <- htseqcounts3[,!grepl(".*RNA128120.*", x = colnames(htseqcounts3))]
+dim(counts4) #57907 genes, 134 samples
+
+
+```
+
+
+```{r, fig.width = 6, fig.height = 4}
+
+#Need to trim down column names to just the RNA seq ID 
+
+names(counts4)[2:(ncol(counts4)-1)] <- substring(names(counts4[,2:(ncol(counts4)-1)]), 123, 131)
+head(counts4)
+
+write.csv(counts4, "davies_counts_raw_trimmed.csv")
+
+```
+
+
+```{r, fig.width = 6, fig.height = 4}
+
+#Plot average unique reads per gene across samples (rowmeans); see how many genes have < 100 average transcript counts across samples 
+ggplot(counts4, mapping=aes(x=rowmean)) + 
+  geom_histogram() + 
+  xlim(-1,100) +
+  stat_bin(binwidth = 150) 
+
+###Remove genes that are too lowly expressed -- Fischer paper doesn't actually say they do this 
+dim(counts4) #57907 genes 136 samples 
+
+#Cut off genes with rowmeans < 2 
+counts5 <- subset(counts4, rowmean > 2) 
+dim(counts5) #down from 57907 genes to 24509
+
+```
+
+
+
+##Now to get data ready for differential expression analysis 
+#First, remove genes without an Entrez ID as in Fischer et al 
+
+```{r}
+
+y <- DGEList(counts=counts5[,2:ncol(counts5)], genes=counts5[,1])
+
+#We retain only those transcripts with Entrez ID's 
+
+head(y$genes)
+
+genelist <- as.list(y$genes)
+library( "biomaRt" )
+ensembl = useMart("ensembl", dataset = "hsapiens_gene_ensembl") 
+
+listAttributes(ensembl)
+genemap <- getBM(attributes = c("ensembl_gene_id", "entrezgene_id", "hgnc_symbol"), filters = "ensembl_gene_id", values = y$genes$genes, mart = ensembl)
+idx <- match(y$genes$genes, genemap$ensembl_gene_id )
+y$genes$entrez <- genemap$entrezgene[ idx ]
+y$genes$hgnc_symbol <- genemap$hgnc_symbol[ idx ]
+
+y2 <- y[!is.na(y$genes$entrez),]
+head(y2$genes)
+dim(y2$genes) #17631 entrez genes 
+
+
+#Now use the Entrez Gene IDs to update the gene symbols:
+
+#Recompute the library sizes
+y2$samples$lib.size <- colSums(y2$counts)
+#Use Entrez Gene IDs as row names
+#rownames(y2$counts) <- rownames(y2$genes) <- y2$genes$entrez #can't do this yet becauset there are duplicates 
+
+#Different RefSeq transcripts for the same gene symbol count predominantly the same reads.
+#So we keep one transcript for each gene symbol. We choose the transcript with highest overall count:
+o <- order(rowSums(y2$counts), decreasing=TRUE)
+y2 <- y2[o,]
+d <- duplicated(y2$genes$hgnc_symbol)
+y2 <- y2[!d,]
+nrow(y2) #17610 genes left 
+head(y2$genes)
+
+#now we can assign rownames by entrez id's 
+#rownames(y2$genes) <- y2$genes$entrez
+#nope there are still duplicates 
+o <- order(rowSums(y2$counts), decreasing=TRUE)
+y2 <- y2[o,]
+d <- duplicated(y2$genes$entrez)
+y2 <- y2[!d,]
+nrow(y2) #17601 genes left 
+head(y2$genes)
+
+#now assign rownames
+rownames(y2$counts) <- rownames(y2$genes) <- y2$genes$entrez 
+y2$genes$entrez <- NULL
+y2$samples
+
+```
+
+##TMM Normalization, as in Fischer et al 
+
+```{r}
+
+#TMM normalization is applied to this dataset to account for compositional difference between the libraries.
+y3 <- calcNormFactors(y2)
+View(y3$samples)
+dim(y3$samples)
+
+y3qcplot_part1 <- y3$samples
+
+#Check normalized library size relative to starting library size 
+y3qcplot <- ggplot(data = y3qcplot_part1, mapping=aes(x=lib.size, y = ((lib.size)*(norm.factors)), 
+)) + 
+  geom_point() 
+ggsave(filename = "htseq_y3qcplot_128120removed.pdf")
+
+
+```
+
+
+##Now, we can move to the differential expression analysis: edgeR
+
+
+```{r}
+#The first step of an analysis should be to examine the samples for outliers and for other relationships. The function plotMDS produces a plot in which distances between samples
+#correspond to leading biological coefficient of variation (BCV) between those samples:
+
+pdf("htseq_mds_allsamples_tmm.pdf")
+MDS <- plotMDS(y3)
+dev.off()
+```
+
+
+```{r}
+#Model: using a design which accounts for inter-patient differences and compares non-brain met vs brain met 
+
+##NBM = NON-BRAIN MET 
+#Brain = BRAIN MET 
+
+#Data frame with annotation of sample type and patient id 
+model <- read.csv("/Users/alliekarz/Documents/MBM-Davies-Kevin/bigpurple/htseq/htseq_final_counts/model.csv") 
+samplesedger <- data.frame(y3$samples)
+sampleslist <- rownames(samplesedger)
+model <- model[model$rna_seq_id %in% sampleslist,]
+
+#Now get rid of the sample with only 3 million reads 
+model <- model[!(model$rna_seq_id == "RNA128120"),]
+
+Patient <- factor(model$patient_id)
+Tissue <- factor(model$bm_or_nbm, levels= c("NBM", "Brain"))
+design <- model.matrix(~Patient+Tissue)
+rownames(design) <- colnames(y3)
+design
+
+#Estimate dispersion
+
+y3 <- estimateDisp(y3,design, robust=TRUE)
+
+#The square root of the common dispersion gives the coefficient of variation of biological variation.
+#The dispersion estimates can be viewed in a BCV plot:
+plotBCV(y3)
+
+#Fit a linear model and test for difference between BM and NBM. 
+fit <- glmFit(y3, design)
+
+#Conduct likelihood ratio tests for BM vs NBM tissue differences and show the top genes:
+lrt <- glmLRT(fit)
+toplrt <- topTags(lrt, n = 10000, sort.by = "PValue", p.value = 1)
+write.csv(toplrt, "toplrt.csv")
+write_rds(lrt, "/gpfs/home/ajk669/davies_fc_edger/lrt.rds", compress=c("none"))
+write_rds(toplrt, "/gpfs/home/ajk669/davies_fc_edger/toplrt.rds", compress=c("none"))
+
+
+plotmdlrt <- plotMD(lrt)
+abline(h=c(-1, 1), col="blue")
+       pdf(plotmdlrt, "plotmdlrt.pdf")
+       dev.off()
+```
+
+#Summarize results 
+```{r}
+
+summary(decideTests(lrt, p.value = 0.05))
+
+pdf("sidewaysvolcano-htseqedger-wc.pdf")
+plotMD(lrt)
+abline(h=c(-1, 1), col="blue")
+dev.off()
+
+
+```
+
+#GO Gene set enrichment  
+
+```{r}
+go <- goana(lrt)
+write_rds(go, "/gpfs/home/ajk669/davies_fc_edger/go.rds", compress=c("none"))
+topgo <- topGO(go, ont="BP", sort="Up", n=100, truncate=100)
+write_rds(go, "/gpfs/home/ajk669/davies_fc_edger/go.rds", compress=c("none"))
+write_rds(topgo, "/gpfs/home/ajk669/davies_fc_edger/topgo.rds", compress=c("none"))
+write.csv(topgo, "topgo.csv")
+```
+
+
+##"Sanity Check" Scatter plot: to compare supp fig 2 from Fischer et al to this analysis
+
+```{r}
+
+supp2 <- read.csv("/Users/alliekarz/Documents/MBM-Davies-Kevin/data_from_paper/supp_table_2_davies_2019.csv", header=TRUE, stringsAsFactors = FALSE)
+
+supp2_merge <- merge(x=supp2, y=toplrt_table, by.x="ID", by.y="hgnc_symbol")
+   
+my.formula <- (supp2_merge$logFC.x ~ supp2_merge$logFC.y)
+
+ggplot(supp2_merge, mapping=aes(x=logFC.x, y=logFC.y)) + 
+  geom_point(aes(color=viridis(1))) + 
+  geom_smooth(method = "lm", se=FALSE, color="black") +
+   stat_poly_eq(formula = supp2_merge$logFC.x ~ supp2_merge$logFC.y, 
+                aes(label = paste(..rr.label..)), 
+                parse = TRUE) +   
+  xlab("Davies 2019 Supplementary Table 2 PAIRS") + 
+  ylab("Allie Analysis htseq-count + edgeR 2020 WHOLE COHORT") + 
+  ggtitle("Sanity Check: how do logFC's compare between their analysis and mine?") + 
+   geom_vline(xintercept = 0) + 
+  geom_hline(yintercept=0) 
+
+ggsave("sanity_check_scatterplot.pdf", 
+       width = 8, height = 6, units = "cm")
+
+##R2 == 0.92, makes sense given missing samples from EGA 
+
+
+```

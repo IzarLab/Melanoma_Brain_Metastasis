@@ -1,0 +1,224 @@
+
+#Read filtering and alignment
+for q in *R1_001.fastq.gz
+do
+cutadapt -a CTGTCTCTTATA -A CTGTCTCTTATA -m 20 -j 20 -o ${q/%.fastq.gz}_trimmed.fastq.gz -p ${q/%R1_001.fastq.gz}R2_001_trimmed.fastq.gz $q ${q/%R1_001.fastq.gz}R2_001.fastq.gz 
+hisat2  -t  -p 20 -X 1000  -x /home/ec2-user/Genomes/grch38/genome -1 ${q/%.fastq.gz}_trimmed.fastq.gz -2 ${q/%R1_001.fastq.gz}R2_001_trimmed.fastq.gz -S ${q/%_R1_001.fastq.gz}.sam
+echo ${q/%_R1_001.fastq.gz}.sam
+samtools view -@ 20 -b -h -S -o ${q/%_R1_001.fastq.gz}.bam ${q/%_R1_001.fastq.gz}.sam
+rm *.sam
+sambamba sort -t 20 -o ${q/%_R1_001.fastq.gz}_sorted.bam ${q/%_R1_001.fastq.gz}.bam
+samtools idxstats ${q/%_R1_001.fastq.gz}_sorted.bam | cut -f 1 | grep -v MT | grep -v KI* | grep -v GL* |  xargs samtools view -b ${q/%_R1_001.fastq.gz}_sorted.bam > ${q/%_R1_001.fastq.gz}_noMT.bam
+sambamba index ${q/%_R1_001.fastq.gz}_noMT.bam
+sambamba markdup -r -t 20 ${q/%_R1_001.fastq.gz}_noMT.bam ../ATAC_Bamfiles/${q/%_R1_001.fastq.gz}_NoDupMTfiltered.bam
+rm *.bam
+done
+
+#Peak call by macs2
+for m in *.bam
+do
+macs2 callpeak -t $m -g hs -f BAM -n ${m/%_NoDupMTfiltered.bam} --outdir ../peakcalls --nomodel --shift -100 --extsize 200 
+done
+#all peaks combined and overlapping peaks merged
+cat *.bed | sort -k1,1 -k2,2n | bedtools merge -c 9 -o mean -d 10 -i - > Allconsensuspeaks.bed
+
+#generate bigwig files from final bam files
+for b in *.bam
+do
+bamCoverage -p 12 --normalizeUsing CPM --binSize 25 --smoothLength 100 -bl /home/ec2-user/Genomes/blacklisthg38/hg38-blacklist.v2.bed   -b $b -o ../bigWigFiles/${b/%.bam}.bw 
+done
+
+#Run Cobra for motif analysis
+sudo service docker start
+sudo docker run --rm -v $PWD:/cobra -it cfce/cobra:2.0
+cd cobra
+source activate cobra
+snakemake all --cores 40
+#config file: config_allpeaks.yaml
+#metafile: metasheet.csv
+
+
+#TOBIAS footprinting analysis
+# https://github.molgen.mpg.de/loosolab/TOBIAS_snakemake
+#in the TOBIAS_snakemake folder 
+conda activate tobias_snakemake_env
+snakemake --configfile Tobias_All.config --cores 25 --conda-prefix /home/ec2-user/miniconda3/envs/ --use-conda --conda-frontend mamba --keep-going
+#congif file: Tobias_All.config
+
+#RNAseq Analysis using DEseq2 (R)
+library(readr)
+library(S4Vectors)
+library(DESeq2)
+
+#load data 
+est_counts_genes_kallisto <- read_csv("/Users/vaibhav/lulabdata/IzarCollab/data_counts_combined.csv")
+exp = read.csv("/Users/vaibhav/lulabdata/IzarCollab/data_counts_combined.csv", header=T, row.names=1)
+
+countMatrix <-as.matrix(exp)
+
+pat_org_des <- read_csv("/Users/vaibhav/lulabdata/IzarCollab/total_sample_design.csv")
+table <- data.frame(pat_org_des)
+
+#Create DESeq dataset. Design parameter controls for patient while comparing by organ
+dds<-DESeqDataSetFromMatrix(countMatrix, colData=table, design=~organ)
+
+#Default statistics: estimation of size factors, dispersion, model fitting and Wald statistics 
+dds<-DESeq(dds)
+
+#build statistical results table from DESeq analysis
+res<-results(dds)
+head(res)
+#export expression data (LFC)
+write.csv(res, "/Users/vaibhav/lulabdata/IzarCollab/RNAseq/total_site_DEG.csv", row.names=TRUE)
+
+#ATACseq analysis using DEseq at TSS
+#find consensus peaks that overlap with TSS
+bedtools intersect -wa -a /home/ec2-user/data/Melanoma_ATAC/peakcalls/NarrowPeaks/chrFixedNarrowpeakfiles/Allconsensuspeaks.bed -b /home/ec2-user/Cobra/ref_files/hg38/refseq_hg38_TSS.sort.minus.plus.1kb.bed > Allconsensuspeaks_overlap.bed 
+#remove duplicate rows 
+bedtools merge -i Allconsensuspeaks_overlap.bed > Allconsensuspeaks_overlapMerged.bed 
+#Annotate the peaks with overlapping TSS
+bedtools intersect -loj -a Allconsensuspeaks_overlapMerged.bed  -b /home/ec2-user/Cobra/ref_files/hg38/refseq_hg38_TSS.sort.minus.plus.1kb.bed > Allconsensuspeaks_TSSannotated.bed 
+#remove col 4, 6, 6, 7 and remove non unique rows
+awk '{$4=$5=$6=$7=""; print $0}' Allconsensuspeaks_TSSannotated.bed | uniq  > Allconsensuspeaks_TSSannotatedUnique.bed
+#FeatureCounts at the peaks overlapping TSS
+#move to SAF format
+awk 'OFS="\t" {print $1"."$2+1"."$3"."$4, $1, $2+1, $3, "."}' Allconsensuspeaks_TSSannotatedUnique.bed > Allconsensuspeaks_TSSannotatedUnique.saf
+#generate the final Count matrix for all samples
+/home/ec2-user/Programs/subread-2.0.3-Linux-x86_64/bin/featureCounts --primary -a Allconsensuspeaks_TSSannotatedUnique.saf -T 10 -F SAF -p -o All_countMatrixTSS.txt *.bam
+
+#R
+library("DESeq2")
+
+MakeDDS_noBatch <-function(cts,coldata){
+  coldata[,1] <- factor(coldata[,1])
+
+  if (all(rownames(coldata) %in% colnames(cts))==F){
+    stop('not all rownames in coldata are in colnames of cts')
+  }
+  cts <- cts[, rownames(coldata)]
+  
+  #Now we are ready to make the DDS
+  dds <- DESeqDataSetFromMatrix(countData = cts,
+                                colData = coldata,
+                                design = ~ Organ)
+  
+  keep <- rowSums(counts(dds)) >= 20
+  dds <- dds[keep,]
+  return(dds)
+  
+}
+
+makeDEseq <-function(dds,Name){
+  dds$Organ <- relevel(factor(dds$Organ), ref = "Peripheral")
+  dds_DEseq <- DESeq(dds)
+  dds_Res<- results(dds_DEseq, name="Organ_Brain_vs_Peripheral", alpha=0.05)
+  dds_Res = na.omit(dds_Res)
+  df_dds_Res = as.data.frame(dds_Res)
+  #generate the gene names from rows.names
+  GeneList=list()
+  for (i in 1:nrow(df_dds_Res)){
+    GeneList=append(GeneList,unlist(strsplit(rownames(df_dds_Res)[i],'.',fixed = TRUE))[4])
+  }
+  
+  df_dds_Res$Gene =GeneList[]
+  #GeneColumn is a list..fix with this
+  df_dds_Res$Gene <- vapply(df_dds_Res$Gene, paste, collapse = ", ", character(1L))
+  #export
+  write.csv(as.data.frame(df_dds_Res), file=paste(Name, 'Res.csv', sep = ''))
+}
+
+
+cts_TSS <- read.table("All_countMatrixTSS.txt", header=TRUE,
+                      sep="\t", row.names=1)
+cts_TSS=cts_TSS[,c(6:29)]
+coldata_All<- read.table('coldata_All.txt', header=TRUE,
+                         sep="\t",row.names=1)
+
+shortColnames = c('X273BMA','X273BMB', 'X273BMC','X4LNA','X4LNB','X4LNC','X5B1A',
+                  'X5B1B','X5B1C','P2686A','BI3A','P2686B','P2686C','mamel134A',
+                  'mamel134B','mamel134C','BI3B','BI3C','BI5A','BI5B',
+                  'BI5C','X273LNA','X273LNB','X273LNC')
+
+colnames(cts_TSS)=shortColnames
+
+dds_TSS_All=MakeDDS_noBatch(cts_TSS, coldata_All)
+makeDEseq(dds_TSS_All, 'All_BrainvsAll_peripheral_TSSpeaks_ATACpeaks')
+
+ 
+#ATACseq data and RNAseq data comparison
+#RNAseq input: total_site_DEG
+#ATACseq input: All_BrainvsAll_peripheral_TSSpeaks_ATACpeaksRes.csv
+
+#ungrouped All
+df1 <-read.csv('All_BrainvsAll_peripheral_TSSpeaks_ATACpeaksRes.csv')
+df2 <-read.csv('total_site_DEG')
+comparison='All_ungrouped'
+
+df1=df1[,c(8,2:7)]
+df2 = na.omit(df2)
+
+df1[,1]= toupper(df1[,1])
+df2[,1]= toupper(df2[,1])
+
+makeOnetable <- function(dfX, dfY){
+  #create an empty df and fill it up with the Genes:ATACseq values from df1
+  combinedDF = data.frame(stringsAsFactors = FALSE)
+  for (i in 1:nrow(dfX)){
+    combinedDF[i,1]=dfX[i,1]
+    combinedDF[i,2]=dfX[i,3]
+  }
+  #attemps to add in the values from df2 if the combineddf has the gene
+  for (n in 1:nrow(combinedDF)){
+    if (isTRUE(combinedDF[n,1] %in% dfY[,1])){
+      combinedDF[n,3]=dfY[which(dfY[,1]==combinedDF[n,1]),3]
+    }
+  }
+  colnames(combinedDF)=c('Gene','ATAC_L2FC','Expression_L2FC')
+  return (combinedDF)
+}
+
+combinedData = makeOnetable(df1,df2)
+combinedDatan_noNa = na.omit(combinedData)
+#export delta ATAC_TSS : delta RNAseq values for all TSS
+write.csv(as.data.frame(combinedDatan_noNa), file=paste(comparison,'_TSS_ATACpeaks_vsRNAseq.csv',sep = ''))
+
+#final figure-R code
+library(ggplot2)
+library(ggrepel)
+library(ggpubr)
+#continue from combinedDatan_noNa
+
+combinedDatan_noNa$diffPeaks[combinedDatan_noNa$Expression_L2FC > 1 & combinedDatan_noNa$ATAC_L2FC > 0.5] = 'Up'
+combinedDatan_noNa$diffPeaks[combinedDatan_noNa$Expression_L2FC < -1 & combinedDatan_noNa$ATAC_L2FC < -0.5] = 'Down'
+combinedDatan_noNa$diffPeaks[combinedDatan_noNa$Expression_L2FC < -1 & combinedDatan_noNa$ATAC_L2FC > 0.5] = 'q1'
+combinedDatan_noNa$diffPeaks[combinedDatan_noNa$Expression_L2FC > 1 & combinedDatan_noNa$ATAC_L2FC < -0.5] = 'q4'
+
+q1=nrow(na.omit(combinedDatan_noNa[combinedDatan_noNa$diffPeaks == "q1",]))
+q2=nrow(na.omit(combinedDatan_noNa[combinedDatan_noNa$diffPeaks == "Up",]))
+q3=nrow(na.omit(combinedDatan_noNa[combinedDatan_noNa$diffPeaks == "Down",]))
+q4=nrow(na.omit(combinedDatan_noNa[combinedDatan_noNa$diffPeaks == "q4",]))
+
+dflabel=combinedDatan_noNa[combinedDatan_noNa$diffPeaks=='Up' | combinedDatan_noNa$diffPeaks=='Down',]
+dflabel=na.omit(dflabel)
+
+ggplot(combinedDatan_noNa)+geom_point(aes(Expression_L2FC,ATAC_L2FC,col=diffPeaks)) +
+  scale_color_manual(breaks = c("Down", "Up"), 
+                     values=c("red4", "green4",'gray','gray'))+
+  geom_text_repel(data=dflabel, aes(Expression_L2FC,ATAC_L2FC,label=Gene,hjust=-0.5, vjust=0.5)) +
+  geom_vline(xintercept=c(-1, 1), col="gray") +
+  geom_hline(yintercept=c(-0.5, 0.5), col="gray") +
+  labs(title =paste('ATACseq vs RNAseq patient', comparison))+
+  xlab('Expression lfc[Brain-Peripheral]')+
+  ylab('ATAC peaks lfc[Brain-Peripheral]')+
+  geom_smooth(aes(Expression_L2FC,ATAC_L2FC),method="lm",alpha=0.5)+
+  stat_cor(aes(Expression_L2FC,ATAC_L2FC), method = "pearson", label.x = -7, label.y = 4, size=5)+
+  annotate(geom="text", size =4,  x=-4, y=3, label=q1,fontface = "bold")+
+  annotate(geom="text", size =4,  x=3, y=4, label=q2,color='green4',fontface = "bold")+
+  annotate(geom="text", size =4,  x=-5, y=-3.5, label=q3,color='red4',fontface = "bold")+
+  annotate(geom="text", size =4,  x=3, y=-2.5, label=q4,fontface = "bold")+
+  theme_classic(base_size=14)
+
+ggsave(file=paste('ScatterPlot_',comparison,'_ATACvsExpression.pdf',sep =''), width = 9, height = 7)
+
+
+

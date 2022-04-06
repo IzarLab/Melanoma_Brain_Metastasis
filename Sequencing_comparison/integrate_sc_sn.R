@@ -3,8 +3,6 @@
 ### title: Integration of MBM05_sc and MBM05_sn for direct comparison 
 ### author: Jana Biermann, PhD
 
-print(Sys.time())
-
 library(dplyr)
 library(Seurat)
 library(gplots)
@@ -22,7 +20,7 @@ colSCSN2 <- c('#FADA8B', '#E1AC24', '#80CFA3', '#288F56')
 
 #### Re-integration ####
 # Split integrated object
-seu <- readRDS('data/MBPM/data_MBPM.rds')
+seu <- readRDS('data/MBPM/data_MBPM_scn.rds')
 sc <- subset(seu, patient == 'MBM05_sc')
 sn <- subset(seu, patient == 'MBM05_sn')
 rm(seu)
@@ -46,7 +44,8 @@ for (c in 1:ncol(sigs)) {
 }
 
 # Save object
-ifelse(!dir.exists(file.path('data/seq_comparison/sc_sn')), dir.create(file.path('data/seq_comparison/sc_sn'), recursive = T), FALSE)
+ifelse(!dir.exists(file.path('data/seq_comparison/sc_sn')), 
+       dir.create(file.path('data/seq_comparison/sc_sn'), recursive = T), FALSE)
 saveRDS(seu, file = paste0('data/seq_comparison/sc_sn/integrated_sc_sn.rds'))
 
 # Plots for cell-type-specific signautres
@@ -70,6 +69,26 @@ g_inf <- ggplot(df_sigs, aes(sequencing, cell_type_int, fill = mean_inf)) +
   geom_tile(color = 'white') + scale_fill_viridis() + coord_fixed() + theme_minimal() + ggtitle('IFN_module1') + 
   theme(axis.text.x = element_text(angle = 90, vjust = 1, size = 7, hjust = 1), 
         axis.title.x = element_blank(), axis.title.y = element_blank(), axis.text.y = element_blank()) 
+g_marsh<-ggplot(df_sigs, aes(sequencing, cell_type_int, fill = mean_marsh))+
+  geom_tile(color = 'white')+
+  scale_fill_viridis()+
+  theme_minimal()+ ggtitle('stress_marsh1')+
+  theme(axis.text.x = element_text(angle = 90, vjust = 1, size = 7, hjust = 1),axis.title.x=element_blank(),axis.title.y=element_blank())+coord_fixed()
+g_vanhove<-ggplot(df_sigs, aes(sequencing, cell_type_int, fill = mean_vanhove))+
+  geom_tile(color = 'white')+
+  scale_fill_viridis()+
+  theme_minimal()+ ggtitle('stress_vanhove1')+
+  theme(axis.text.x = element_text(angle = 90, vjust = 1, size = 7, hjust = 1),axis.title.x=element_blank(),axis.title.y=element_blank(),axis.text.y = element_blank())+coord_fixed()
+g_brink<-ggplot(df_sigs, aes(sequencing, cell_type_int, fill = mean_brink))+
+  geom_tile(color = 'white')+
+  scale_fill_viridis()+
+  theme_minimal()+ ggtitle('stress_brink1')+
+  theme(axis.text.x = element_text(angle = 90, vjust = 1, size = 7, hjust = 1),axis.title.x=element_blank(),axis.title.y=element_blank(),axis.text.y = element_blank())+coord_fixed()
+g_denisenko<-ggplot(df_sigs, aes(sequencing, cell_type_int, fill = mean_denisenko))+
+  geom_tile(color = 'white')+
+  scale_fill_viridis()+
+  theme_minimal()+ ggtitle('stress_denisenko1')+
+  theme(axis.text.x = element_text(angle = 90, vjust = 1, size = 7, hjust = 1),axis.title.x=element_blank(),axis.title.y=element_blank(),axis.text.y = element_blank())+coord_fixed()
 
 
 # Plots part 1
@@ -120,10 +139,29 @@ ggplot(cti, aes(x = seu.sequencing, fill = seu.cell_type_fine)) +
   ylab('Fraction (%)') + labs(fill = 'Cell type') + 
   theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
 
+VlnPlot(seu, features = c('stress_module1','mito_module1','IFN_module1','Ig_module1'),
+        group.by = 'sequencing',pt.size = 0,cols = colSCSN)
+VlnPlot(seu, features = c('stress_marsh1','stress_vanhove1','stress_brink1','stress_denisenko1'),
+        group.by = 'sequencing',pt.size = 0,cols = colSCSN,ncol = 2)
+
+VlnPlot(seu, features = c('stress_marsh1','stress_vanhove1','stress_brink1','stress_denisenko1'),
+        group.by = 'cell_type_int',split.by = 'sequencing',pt.size = 0,cols = colSCSN,ncol = 2)+
+  theme(legend.position = 'bottom')
+VlnPlot(seu, features = c('stress_module1','mito_module1','IFN_module1','Ig_module1'),
+        group.by = 'cell_type_int',split.by = 'sequencing',pt.size = 0,cols = colSCSN,ncol = 2)+
+  theme(legend.position = 'bottom')
+
+VlnPlot(seu, features = c('mito_module1','IFN_module1','stress_module1',
+                          'stress_marsh1','stress_vanhove1','stress_brink1','stress_denisenko1'),
+        group.by = 'cell_type_int',split.by = 'sequencing',pt.size = 0,cols = colSCSN,
+        stack = T,flip = T)+
+  theme(legend.position = 'bottom',axis.title.x = element_blank())
+
 FeaturePlot(seu, features = 'proportion_scaled_cnv_avg') + scale_color_viridis(direction = -1)
 VlnPlot(seu, features = 'proportion_scaled_cnv_avg', group.by = 'sequencing', pt.size = 0, cols = colSCSN)
 
 print(g_stress + g_mito + g_inf)
+print(g_marsh+g_vanhove+g_brink+g_denisenko)
 dev.off()
 
 
@@ -221,5 +259,3 @@ plts <- lapply(plts, function(x) {
 })
 CombinePlots(plots = plts, legend = 'none', ncol = 3)
 dev.off()
-
-print(Sys.time())

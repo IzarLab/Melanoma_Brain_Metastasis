@@ -3,8 +3,6 @@
 ### title: Differential pathways compared between MBM and MPM tumor cells 
 ### author: Jana Biermann, PhD
 
-print(Sys.time())
-
 library(hypeR)
 library(dplyr)
 library(Seurat)
@@ -12,28 +10,27 @@ library(ggplot2)
 library(gplots)
 library(DropletUtils)
 library(msigdbr)
-
+library(scales)
+library(viridis)
+library(plyr)
+library(ggrastr)
+library(patchwork)
 colBP <- c('#A80D11', '#008DB8')
 colSCSN <- c('#E1AC24', '#288F56')
 
 
 # Subset object to sn tumor cells
-seu <- readRDS('data/MBPM/data_MBPM.rds')
-seu <- subset(seu1, sequencing == 'Single nuclei' & cell_type_main == 'Tumor cells')
-
-# Downsampling
-downsampled <- downsampleBatches(as.matrix(seu@assays$RNA@counts), batch = seu$organ)
-seu[['downsampled']] <- CreateAssayObject(counts = downsampled)
-DefaultAssay(seu) <- 'downsampled'
-seu <- NormalizeData(seu)
+seu <- readRDS('data/MBPM/data_MBPM_scn.rds')
+seu <- subset(seu, sequencing == 'Single nuclei' & cell_type_fine == 'Tumor cells')
 
 # DEG
 Idents(seu) <- seu$organ
-markers <- FindAllMarkers(seu, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25, assay = 'downsampled', 
-                          max.cells.per.ident = min(table(seu$organ)))
-ifelse(!dir.exists(file.path('data/DEG/organ/downsampled/tumor')), 
-       dir.create(file.path('data/DEG/organ/downsampled/tumor'), recursive = T), FALSE)
-write.csv(markers, 'data/DEG/organ/downsampled/tumor/markers_MBPM_sn_tumor_organ_down.csv', row.names = F)
+markers <- FindAllMarkers(seu, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25, 
+                          assay = 'RNA', max.cells.per.ident = min(table(seu$organ)),
+                          test.use = 'MAST')
+ifelse(!dir.exists(file.path('data/DEG/organ/tumor')), 
+       dir.create(file.path('data/DEG/organ/tumor'), recursive = T), FALSE)
+write.csv(markers, 'data/DEG/organ/tumor/markers_MBPM_sn_tumor_organ.csv', row.names = F)
 
 
 #### Get significant pathways for marker sets ####
@@ -72,10 +69,11 @@ length(sig.pw)
 
 
 #### Apply significant pathways as module scores ####
-msigdbgenes <- read.csv('signatures/msigdb_pathways_hypeR.csv', na.strings = '')
+msigdbgenes <- read.csv('~/brain_mets/signatures/relevant_msigdb_pathways_hypeR.csv', na.strings = '')
 
 for (s in sig.pw) {
-  seu <- AddModuleScore(object = seu, features = list(msigdbgenes[, s]), name = s, assay = 'RNA', search = F)
+  seu <- AddModuleScore(object = seu, features = list(msigdbgenes[, s]), 
+                        name = s, assay = 'RNA', search = F)
 }
 
 
@@ -102,19 +100,41 @@ perm.stats <- perm.stats[-1, ]
 write.csv(perm.stats, 'data/DEG/organ/downsampled/tumor/permpathways_MBPM_sn_tumor_organ_down.csv', row.names = F)
 
 
-# Plot violins
-final <- c('GOBP_EPITHELIAL_TO_MESENCHYMAL_TRANSITION', 'GOBP_OXIDATIVE_PHOSPHORYLATION', 'KEGG_PARKINSONS_DISEASE', 
-           'PID_PDGFRB_PATHWAY', 'WP_KIT_RECEPTOR_SIGNALING_PATHWAY', 'GOBP_TISSUE_REGENERATION', 'GOBP_RESPONSE_TO_TRANSFORMING_GROWTH_FACTOR_BETA', 
-           'WP_PI3KAKT_SIGNALING_PATHWAY', 'HALLMARK_ANDROGEN_RESPONSE', 'WP_MECHANOREGULATION_AND_PATHOLOGY_OF_YAPTAZ_VIA_HIPPO_AND_NONHIPPO_MECHANISMS')
+#### Plot violins ####
+final<-c('KEGG_OXIDATIVE_PHOSPHORYLATION', 'WP_PI3KAKT_SIGNALING_PATHWAY',
+         'KEGG_INSULIN_SIGNALING_PATHWAY', 'KEGG_ERBB_SIGNALING_PATHWAY', 
+         'WP_EGFR_TYROSINE_KINASE_INHIBITOR_RESISTANCE', 'PID_PDGFRB_PATHWAY',
+         'PID_KIT_PATHWAY', 'HALLMARK_EPITHELIAL_MESENCHYMAL_TRANSITION',
+         'HALLMARK_MTORC1_SIGNALING', 'KEGG_CELL_ADHESION_MOLECULES_CAMS',
+         'KEGG_MELANOGENESIS')
 
-pdf('data/DEG/organ/tumor/plots_vln_MBPM_sn_tumor_organ_down.pdf')
+msigdbgenes <- read.csv('~/brain_mets/signatures/relevant_msigdb_pathways_hypeR.csv', na.strings = '')
+for (s in final) {
+  seu <- AddModuleScore(object = seu, features = list(msigdbgenes[, s]), 
+                        name = s, assay = 'RNA', search = F)
+}
+
+
+pdf('data/DEG/organ/tumor/plots_vln_MBPM_sn_tumor_organ_final.pdf',width = 10,height = 10)
 plots <- VlnPlot(object = seu, features = paste0(final, 1), pt.size = 0, group.by = 'sequencing', 
                  split.by = 'organ', split.plot = T, ncol = 3, combine = F, cols = colBP)
 plots <- lapply(X = plots, FUN = function(p) p + geom_boxplot(width = 0.1, outlier.color = NA) + 
-                  theme(plot.title = element_text(size = 4), axis.title.x = element_blank(), 
-                        axis.text.x = element_blank(), legend.position = 'none', axis.ticks.x = element_blank()))
+                  theme(plot.title = element_text(size = 4), 
+                        axis.title.x = element_blank(), 
+                        axis.text.x = element_blank(), 
+                        legend.position = 'none', 
+                        axis.ticks.x = element_blank()))
 print(CombinePlots(plots = plots, ncol = 4, legend = 'bottom'))
+
+plots2 <- VlnPlot(object = seu, features = paste0(final, 1), pt.size = 0, group.by = 'patient', 
+                  combine = F)
+plots2 <- lapply(X = plots2, FUN = function(p) p +
+                  theme(plot.title = element_text(size = 4), axis.title.x = element_blank(), 
+                        axis.text.x = element_blank(), 
+                        legend.position = 'none', 
+                        axis.ticks.x = element_blank(),
+                        legend.key.size = unit(0.2,'cm'),
+                        legend.text = element_text(size=5)))
+print(CombinePlots(plots = plots2, ncol = 3, legend = 'bottom'))
 dev.off()
 
-
-print(Sys.time())

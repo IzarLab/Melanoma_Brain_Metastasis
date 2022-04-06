@@ -1,0 +1,145 @@
+---
+title: "upset"
+author: "Allie"
+date: "8/5/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+
+#Load dependencies 
+
+library(dplyr)
+library(UpSetR)
+library(ggplot2)
+library(reshape2)
+library(RColorBrewer)
+library(ggrepel)
+library(reshape)
+
+
+sessionInfo()
+```
+
+R version 4.0.3 (2020-10-10)
+Platform: x86_64-apple-darwin17.0 (64-bit)
+Running under: macOS Big Sur 10.16
+
+Matrix products: default
+LAPACK: /Library/Frameworks/R.framework/Versions/4.0/Resources/lib/libRlapack.dylib
+
+locale:
+[1] en_US.UTF-8/en_US.UTF-8/en_US.UTF-8/C/en_US.UTF-8/en_US.UTF-8
+
+attached base packages:
+ [1] grid      parallel  stats4    stats     graphics  grDevices utils     datasets  methods   base     
+
+other attached packages:
+ [1] ComplexHeatmap_2.6.2 UpSetR_1.4.0         lubridate_1.8.0      biomaRt_2.46.3       ggrepel_0.9.1        plyr_1.8.6          
+ [7] forcats_0.5.1        stringr_1.4.0        dplyr_1.0.8          purrr_0.3.4          readr_2.1.2          tidyr_1.2.0         
+[13] tibble_3.1.6         ggplot2_3.3.5        tidyverse_1.3.1      statmod_1.4.36       edgeR_3.32.1         limma_3.46.0        
+[19] org.Hs.eg.db_3.12.0  GO.db_3.12.1         AnnotationDbi_1.52.0 IRanges_2.24.1       S4Vectors_0.28.1     Biobase_2.50.0      
+[25] BiocGenerics_0.36.1  BiocManager_1.30.16 
+
+loaded via a namespace (and not attached):
+ [1] matrixStats_0.61.0   fs_1.5.2             bit64_4.0.5          RColorBrewer_1.1-2   progress_1.2.2       httr_1.4.2          
+ [7] tools_4.0.3          backports_1.4.1      utf8_1.2.2           R6_2.5.1             DBI_1.1.2            colorspace_2.0-3    
+[13] GetoptLong_1.0.5     withr_2.5.0          gridExtra_2.3        tidyselect_1.1.2     prettyunits_1.1.1    curl_4.3.2          
+[19] bit_4.0.4            compiler_4.0.3       cli_3.2.0            rvest_1.0.2          Cairo_1.5-14         xml2_1.3.3          
+[25] labeling_0.4.2       scales_1.1.1         askpass_1.1          rappdirs_0.3.3       digest_0.6.29        rmarkdown_2.13      
+[31] pkgconfig_2.0.3      htmltools_0.5.2      dbplyr_2.1.1         fastmap_1.1.0        GlobalOptions_0.1.2  rlang_1.0.2         
+[37] readxl_1.3.1         rstudioapi_0.13      RSQLite_2.2.10       farver_2.1.0         shape_1.4.6          generics_0.1.2      
+[43] jsonlite_1.8.0       magrittr_2.0.2       Rcpp_1.0.8           munsell_0.5.0        fansi_1.0.2          lifecycle_1.0.1     
+[49] stringi_1.7.6        yaml_2.3.5           BiocFileCache_1.14.0 blob_1.2.2           crayon_1.5.0         lattice_0.20-45     
+[55] haven_2.4.3          circlize_0.4.14      hms_1.1.1            locfit_1.5-9.4       knitr_1.37           pillar_1.7.0        
+[61] rjson_0.2.21         reshape2_1.4.4       reprex_2.0.1         XML_3.99-0.9         glue_1.6.2           evaluate_0.15       
+[67] modelr_0.1.8         png_0.1-7            vctrs_0.3.8          tzdb_0.2.0           cellranger_1.1.0     gtable_0.3.0        
+[73] openssl_2.0.0        clue_0.3-60          assertthat_0.2.1     cachem_1.0.6         xfun_0.30            broom_0.7.12        
+[79] tinytex_0.37         memoise_2.0.1        cluster_2.1.2        ellipsis_0.3.2      
+> 
+
+
+```{r}
+
+###Import data
+## Fischer [...] Davies et al Cancer Discovery 2019: differentially expressed genes by EdgeR, Brain Met vs Non-Brain Met from FFPE/frozen samples, bulk RNA-seq. Whole cohort (n = 135 samples)
+davies_wc <- read.csv("/Users/alliekarz/Dropbox (NYU Langone Health)/Bioinformatics_projects/ultimate_upset/data/data_paired_all_samples_BvsP_DESeq2.csv", stringsAsFactors=FALSE, header=TRUE)
+
+## Izar et al Cell 2022: transcript markers of Brain Metastasis cluster in snRNA-seq data 
+izarsc_deg <- read.csv("/Users/alliekarz/Dropbox (NYU Langone Health)/Bioinformatics_projects/ultimate_upset/data/izarnew_markers_MBPM_sn_tumor_organ_full.csv", stringsAsFactors=FALSE, header=TRUE)
+
+## Kleffman et al Cancer Discovery 2022: differentially expressed proteins between brain met-derived vs non-brain met derived short-term cultures by MS/MS proteomics. n = 3 pairs of patient-matched short-term cultures
+prot_pair <- read.csv("/Users/alliekarz/Dropbox (NYU Langone Health)/Bioinformatics_projects/ultimate_upset/data/kvr_de_paired_run2.csv", stringsAsFactors=FALSE, header=TRUE)
+names(prot_pair) <- gsub(pattern="X.", "", names(prot_pair))
+names(prot_pair) <- gsub(pattern="\\.", "", names(prot_pair))
+prot_pair$gene <- sub("\\'", "", prot_pair$gene)
+prot_pair$gene <- sub("'", "", prot_pair$gene)
+
+```
+
+
+```{r}
+#Assign binary value for upset plot. 1 == meets criteria of p-value and/or log2FC threshold. 0 == does not meet criteria. 
+
+##Criteria for Davies dataset, whole cohort: logFC > 0.4, padj < 0.05
+davies_wc$upset <- as.numeric(ifelse(davies_wc$log2FoldChange > 0.4 & davies_wc$padj < 0.05, "1", "0"))
+colnames(davies_wc) <- paste("davies_wc", colnames(davies_wc), sep = "_")
+
+##Criteria for paired Izar Lab sc dataset of markers for the brain met cluster: logFC > 0.4, adj p value < 0.05 
+colnames(izarsc_deg) <- paste("izar_deg", colnames(izarsc_deg), sep = "_")
+izarsc_deg$izarsc_upset <- as.numeric(ifelse(izarsc_deg$izar_deg_avg_log2FC > 0.4 & izarsc_deg$izar_deg_p_val_adj < 0.05, "1", "0"))
+
+##Criteria for paired cohort proteomics dataset: logFC > 0.4 (small n makes for high p values)
+prot_pair$upset <- as.numeric(ifelse(prot_pair$meanfoldchange > 0.4, "1", "0"))
+colnames(prot_pair) <- paste("prot_pair", colnames(prot_pair), sep = "_")
+
+```
+
+
+```{r}
+
+#Get data into one table 
+
+merge <- merge(davies_wc, izarsc_deg, by.x = "davies_wc_X", by.y = "izar_deg_gene", all = TRUE)
+merge <- merge(merge, prot_pair, by.x = "davies_wc_X", by.y = "prot_pair_gene", all = TRUE)
+
+merge[is.na(merge)] <- 0
+
+```
+
+
+```{r}
+
+#Prepare data for upset plot 
+merge <- as.data.frame(merge)
+
+#Remove any duplicated genes 
+merge <- merge[!duplicated(merge$davies_wc_X),]
+rownames(merge) <- make.names(merge$davies_wc_X, unique=TRUE)
+merge_upset <- merge[,grepl("upset", names(merge))]
+
+```
+
+
+```{r}
+
+#Upset plot: izar sn data + whole cohort data from davies and proteomics 
+merge2 <- merge_upset[,c("davies_wc_upset", "prot_pair_upset", "izarsc_upset")]
+pdf("upset_20220130_wc.pdf")
+upset(merge2, nsets=3, order.by = c("freq", "degree"), decreasing = c(T,F), mainbar.y.label= "Number of Genes in Common", sets.x.label = "Gene List Size")
+dev.off()
+
+
+#Which genes meet criteria in all 3 sets: davies rna-seq, proteomics, and sn? 
+merge_upsetf <- merge_upset %>% filter(davies_wc_upset == 1 & prot_pair_upset == 1 & izarsc_upset == 1) ## 6 genes 
+write.csv(merge_upsetf, "merge_upset_20220202_final.csv")
+#LRRC1, NCAM1, WNK4, ST6GALNAC3, TBXAS1, NELL1
+
+
+```
+
+
