@@ -68,7 +68,7 @@ mat<-mat[rowSums(mat)>0,]
 #according to this quality criteria.
 #Several approaches have then been proposed to choose the optimal value of r. For example, (Brunet2004) proposed to take the first value of r 
 #for which the cophenetic coefficient #starts decreasing, (Hutchins2008) suggested to choose the first value where the RSS curve presents an 
-inflection point, and (Frigyesi2008) considered the smallest value at which #the decrease in the RSS is lower than the decrease of the RSS obtained 
+#inflection point, and (Frigyesi2008) considered the smallest value at which #the decrease in the RSS is lower than the decrease of the RSS obtained 
 #from random data.
 
 pdf(file = paste0(pat,"_nmf.pdf"),height = 20,width=20)
