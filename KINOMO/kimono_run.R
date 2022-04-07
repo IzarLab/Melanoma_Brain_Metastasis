@@ -4,7 +4,7 @@
 
 #Instructions
 #The KINOMO repsository can be accessed via https://github.com/IzarLab/KINOMO.git
-#Convert the gene expression data (raw counts) Seurat object and perform necessary normalization, scaling etc.
+#Convert the gene expression data (raw counts) to Seurat object and perform necessary normalization, scaling etc.
 #Run the following R script
 
 #!/usr/bin/env Rscript
@@ -72,7 +72,7 @@ mat<-mat[rowSums(mat)>0,]
 #from random data.
 
 pdf(file = paste0(pat,"_nmf.pdf"),height = 20,width=20)
-nmf.estimate.rank <- KINOMO(mat, 2:10, nrun=10, .opt='v3p8',seed=123)
+nmf.estimate.rank <- KINOMO(mat, 2:10, nrun=10)
 plot(nmf.estimate.rank)
 dev,off()
 
@@ -85,7 +85,7 @@ seu5<-seu
 
 #Perform factorization using estimated rank
 myrank<-4
-nmf.estimate.rank <- KINOMO(mat, rank=myrank, .opt='v3',seed=123)
+nmf.estimate.rank <- KINOMO(mat, rank=myrank)
 saveRDS(nmf.estimate.rank,paste0(pat,"/",pat,"_nmf_rank_",myrank,".rds"))
 res<-nmf.estimate.rank
 
