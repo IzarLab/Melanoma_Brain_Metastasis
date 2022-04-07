@@ -1,5 +1,6 @@
-#Script - Running ARACNe using gene expression data
-#Date of Creation - 01/24/2022
+# Author: Somnath Tagore, Ph.D. Title: Running ARACNe using gene expression data 
+# Script Name: ARACNe_run.sh 
+# Last Updated: 01/24/2022
 
 #Instructions
 #Unzip the ARACNe.zip file and save a copy in the current directory
