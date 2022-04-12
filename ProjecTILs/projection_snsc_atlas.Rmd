@@ -1,0 +1,351 @@
+---
+title: Apply combined atlas from snRNA-seq and scRNA-seq to analyzed query datasets
+author: "M. Andreatta <massimo.andreatta at unil.ch> and S. Carmona <santiago.carmona at unil.ch>"
+knit: (function(input_file, encoding) {
+  out_dir <- 'docs';
+  rmarkdown::render(input_file,
+ encoding=encoding,
+ output_file=file.path(dirname(input_file), out_dir, 'index.html'))})
+#output: html_notebook
+---
+
+This workbook briefly describes a reference atlas constructed from single-cell and single-nucleus transcriptomic data, and outlines a projection approach to interpret additional datasets.
+
+
+```{r, message=FALSE, warning=F, results=FALSE}
+renv::activate()
+renv::restore()
+
+#remotes::install_github("carmonalab/UCell", ref="v1.3")
+#remotes::install_github("carmonalab/scGate")
+#remotes::install_github("carmonalab/ProjecTILs")
+```
+
+```{r}
+library(ggplot2)
+library(UCell)
+library(scGate)
+library(ProjecTILs)
+
+library(gridExtra)
+library(Seurat)
+library(plyr)
+```
+
+Download the reference atlas and an .rds object containing all the samples
+```{r}
+do_download <- F
+
+if (do_download) {
+    #reference
+    dataUrl <- "https://drive.switch.ch/index.php/s/tNBZv1iiX3T6pHy/download"
+    download.file(dataUrl, "ref_TIL_MBM_human_v2.rds")
+    
+    #All samples in .rds
+    dataUrl <- "https://drive.switch.ch/index.php/s/2jr25oo7xSRVGHp/download"
+    download.file(dataUrl, "data_MBPM_scn_tcell.rds")
+}
+```
+
+Read in all samples
+```{r}
+data.all <- readRDS("data_MBPM_scn_tcell.rds")
+data.all
+
+table(data.all$patient)
+```
+
+Remove samples with <10 cells
+```{r}
+t <- table(data.all$patient)
+
+suff.large.samples <-  names(t[t >= 10])
+data.all <- subset(data.all, subset=patient %in% suff.large.samples)
+```
+
+Focus on T cells
+```{r}
+models <- scGate::get_scGateDB(version = "v0.4")
+model.T <- models$human$generic$Tcell
+
+data.all <- scGate(data.all, model = model.T,
+                  assay = 'RNA', pos.thr = 0.1, neg.thr = 0.1, ncores=4)
+
+DimPlot(data.all)
+DimPlot(data.all, group.by = "cell_type_fine")
+
+data.all <- subset(data.all, subset=is.pure=="Pure")
+```
+
+Load custom reference map generated on sc- and sn- human data
+```{r}
+ref <- load.reference.map("ref_TIL_MBM_human_v2.rds")
+
+Idents(ref) <- "functional.cluster"
+DimPlot(ref, label=T, cols = ref@misc$atlas.palette) + theme(aspect.ratio = 1)
+```
+
+
+See some marker genes
+```{r, fig.height=6, fig.width=10}
+DefaultAssay(ref) <- "RNA"
+markerGenes <- c("TOX","IL7R","LEF1","IL2RA","CXCL13","TOX2","ITGAE","CCL5","BATF","ICOS","KLRD1","MIR155HG","ENTPD1","HAVCR2","TNF","CRTAM","CD69","TNFRSF9","TCF7","SELL","CD8A","CD4","FOXP3") 
+FeaturePlot(ref, features=markerGenes, ncol=5)
+ggsave("plots/ref.markers.pdf",width=25,height=20)
+```
+
+```{r fig.height=7, fig.width=2.5}
+library(patchwork)
+
+Idents(ref) <- "functional.cluster"
+DefaultAssay(ref) <- "RNA"
+
+VlnPlot(ref, features = c("CD8A", "CD4", markerGenes), fill.by="ident", cols=ref@misc$atlas.palette, stack = T, flip=T)
+ggsave("plots/ref.violin.pdf", width=5, height=14)
+```
+
+Split data object by patient. Each sample will be projected separately into the reference atlas
+```{r}
+Idents(data.all) <- "patient"
+DefaultAssay(data.all) <- "RNA"
+data.list <- SplitObject(data.all)
+```
+
+# Projection into reference
+
+*Note:* we need to used ProjecTILs >=1.3.0 to be able to project into a human atlas.
+```{r}
+precomp <- F
+if(precomp) {
+   data.projected <- readRDS("data.projected.Rds")
+} else {
+   data.projected <- make.projection(data.list, ref=ref,ncores = 6, filter.cells = FALSE, future.maxSize = 4000)
+   saveRDS(data.projected,"data.projected.Rds")
+}
+```
+
+Plot projection. Each plot corresponds to a sample; the density of query cells is shown as black contour lines.
+```{r fig.height=5, fig.width=6}
+pll <- list()
+for (i in seq_along(data.projected)) {
+   s <- names(data.projected)[i]
+   data.projected[[s]] <- cellstate.predict(ref=ref, query=data.projected[[s]])
+   pll[[i]] <- plot.projection(ref, data.projected[[s]], pointsize = 0.3, linesize = 0.3)  + 
+        theme_minimal() + theme(aspect.ratio = 1, axis.title=element_blank(),
+        axis.text=element_blank(),
+        axis.ticks=element_blank())  + NoLegend() + ggtitle(s)
+}
+wrap_plots(pll)
+```
+
+Re-merge samples after projection, to summarize results
+```{r}
+refSamples <- names(table(ref$patient))
+#Merge samples
+data.projected.merge <- suppressMessages(Reduce(ProjecTILs:::merge.Seurat.embeddings, data.projected))
+```
+
+We have projected all samples, one a time, into the atlas. However, the query list contained both samples contained in the reference atlas (those larger than 250 cells), as well as a number of 'test' samples not included in the reference.
+
+Let us first look at the 'reference' samples that were included in the atlas.
+```{r}
+Idents(data.projected.merge) <- "patient"
+data.projected.sub <- subset(data.projected.merge, idents = refSamples)
+```
+
+Plot UMAP distribution for each sample, comparing coordinates in reference atlas and projected coordinates. 
+'Functional cluster' annotations
+```{r, fig.height=12, fig.width=3}
+a <- DimPlot(data.projected.sub, group.by = "functional.cluster", split.by = "patient", ncol = 1, cols=ref@misc$atlas.palette)
+b <- DimPlot(ref, group.by = "functional.cluster", split.by = "patient", ncol = 1, cols=ref@misc$atlas.palette)
+c <- a + ggtitle('Projected') | b + ggtitle('Reference')
+c
+ggsave("plots/refSamples.projection.functionalCluster.pdf",c, height = 20, width = 5)
+```
+
+Compare the expression profiles for a panel of important genes in the reference and in the projected data
+```{r, fig.height=6, fig.width=8}
+DefaultAssay(data.projected.sub) <- "RNA"
+Idents(data.projected.sub) <- "sequencing"
+data.projected.sub.seq <- SplitObject(data.projected.sub)
+
+radarGenes <- c("FOXP3","CD4","CD8A","TCF7","CCR7","IL7R","IL2RA","GZMB","GZMK","PDCD1","HAVCR2","ENTPD1","TOX","TOX2","MKI67","CXCL13","MIR155HG")
+
+r <- plot.states.radar(ref, data.projected.sub.seq,genes4radar=radarGenes,return = T, return.as.list = T)
+wrap_plots(r)
+ggsave("plots/radar.pdf",height = 10, width = 20)
+```
+
+Even in the reference, the profiles from single-cell and single-nuclei are very different for several genes. It makes more sense to plot them separately
+```{r, fig.height=6, fig.width=8}
+Idents(ref) <- "sequencing"
+ref.seq <- SplitObject(ref)
+r <- plot.states.radar(ref = ref.seq$`Single nuclei`, query = data.projected.sub.seq,
+                       genes4radar=radarGenes,return = T, return.as.list = T)
+rr <- wrap_plots(r)
+rr
+ggsave("plots/radar.sn.pdf",height = 10, width = 20)
+
+r <- plot.states.radar(ref = ref.seq$`Single cells`, query = data.projected.sub.seq,
+                       genes4radar=radarGenes,return = T, return.as.list = T)
+wrap_plots(r)
+ggsave("plots/radar.sc.pdf",height = 10, width = 20)
+```
+
+We can also display expression profiles for each sample individually
+```{r, fig.height=10, fig.width=10}
+DefaultAssay(data.projected.sub) <- "RNA"
+Idents(data.projected.sub) <- "sequencing"
+aa <- SplitObject(data.projected.sub)
+
+radarGenes <- c("FOXP3","CD4","CD8A","TCF7","CCR7","IL7R","IL2RA","GZMB","GZMK","PDCD1","HAVCR2","ENTPD1","TOX","TOX2","MKI67","CXCL13","MIR155HG")
+
+aa.sc <- SplitObject(aa$`Single cells`, split.by = "patient")
+aa.sn <- SplitObject(aa$`Single nuclei`, split.by = "patient")
+
+Idents(ref) <- "sequencing"
+ref.seq <- SplitObject(ref)
+r <- plot.states.radar(ref.seq$`Single nuclei`, aa.sn, genes4radar=radarGenes,return = T, return.as.list = T)
+wrap_plots(r)
+
+ggsave("plots/radar.bysample.sn.pdf",height = 10, width = 20)
+
+r <- plot.states.radar(ref.seq$`Single cells`, aa.sc, genes4radar=radarGenes, return = T, return.as.list = T)
+wrap_plots(r)
+
+ggsave("plots/radar.bysample.sc.pdf",height = 10, width = 20)
+```
+
+# Test set: samples not included in the reference
+
+Integration of small samples (< 100-200 cells) can be difficult. We can still analyze them by projection into the reference, composed of larger, higher-quality samples
+```{r}
+refSamples <- names(table(ref$patient))
+
+data.projected.merge <- suppressMessages(Reduce(ProjecTILs:::merge.Seurat.embeddings, data.projected))
+Idents(data.projected.merge) <- "patient"
+data.projected.subTest <- subset(data.projected.merge, idents = refSamples, invert=T)
+```
+
+```{r fig.height=4, fig.width=5}
+pll <- list()
+data.list <- SplitObject(data.projected.subTest, split.by = "patient")
+for (i in seq_along(data.list)) {
+   s <- names(data.list)[i]
+   ncells <- ncol(data.list[[i]])
+   
+   data.list[[s]] <- cellstate.predict(ref=ref, query=data.list[[s]])
+   pll[[i]] <- plot.projection(ref, data.list[[s]], pointsize = 0.8, linesize = 0.3)  +  
+        theme_minimal() + theme(aspect.ratio = 1, axis.title=element_blank(),
+        axis.text=element_blank(),
+        axis.ticks=element_blank())  + NoLegend() + ggtitle(sprintf("%s - N=%i", s, ncells))
+}
+wrap_plots(pll)
+
+ggsave("plots/testset.projected.png", height=6, width=10)
+ggsave("plots/testset.projected.pdf", height=6, width=10)
+```
+
+Export select plots (for manu)
+```{r}
+a <- plot.projection(ref, data.list[["MBM04_sc"]], pointsize = 0.8, linesize = 0.3)  +  
+        theme_bw() + theme(aspect.ratio = 1) + ggtitle("MBM04 sc")
+
+#UMAP_1
+summary(ref@reductions$umap@cell.embeddings[,1])
+x.lim <- c(-7.5,8.5)
+#UMAP_2
+summary(ref@reductions$umap@cell.embeddings[,2])
+y.lim <- c(-5.5,10)
+
+#increase margins
+a <- a + xlim(x.lim) + ylim(y.lim) 
+
+ggsave("plots/MBM04_sc.projected.pdf", height=4, width=6)
+
+a <- plot.projection(ref, data.list[["MBM17_sn"]], pointsize = 0.8, linesize = 0.3)  +  
+        theme_bw() + theme(aspect.ratio = 1) + ggtitle("MBM17 sn")
+
+#UMAP_1
+summary(ref@reductions$umap@cell.embeddings[,1])
+x.lim <- c(-7.5,8.5)
+#UMAP_2
+summary(ref@reductions$umap@cell.embeddings[,2])
+y.lim <- c(-5.5,10)
+
+#increase margins
+a <- a + xlim(x.lim) + ylim(y.lim) 
+
+ggsave("plots/MBM17_sn.projected.pdf", height=4, width=6)
+
+```
+
+
+'Functional cluster' annotation vs. 'original' annotation for these samples
+```{r, fig.height=9, fig.width=4}
+a <- DimPlot(data.projected.subTest, group.by = "cell_type_fine", split.by = "patient", ncol = 1)
+b <- DimPlot(data.projected.subTest, group.by = "functional.cluster", split.by = "patient", ncol = 1, cols=ref@misc$atlas.palette)
+c <- a + ggtitle('Original_label') | b + ggtitle('Predicted_cluster')
+c
+ggsave("plots/testSamples.projection.originalAnnotation.pdf",c, height = 20, width = 8)
+```
+
+Another way of showing the results: density curves for projected cells
+```{r fig.height=6, fig.width=12}
+combined <- list()
+i <- 1
+embs <- ref@reductions$umap@cell.embeddings
+
+for (s in names(data.projected)) {
+   
+   if (! s %in% refSamples) {
+      combined[[i]] <- plot.projection(ref, data.projected[[s]], pointsize = 0.3, linesize = 0.3)  + 
+         theme_bw() + theme(aspect.ratio = 1) + NoLegend() + ggtitle(s)
+      i <- i+1
+      
+      combined[[i]] <- DimPlot(data.projected[[s]], group.by = "cell_type_fine") + theme_bw() + 
+                       xlim(min(embs[,1]), max(embs[,1])) +  ylim(min(embs[,2]), max(embs[,2])) 
+      i <- i+1
+   }
+}
+g <- wrap_plots(combined, ncol=6)
+g
+ggsave("plots/testSamples.projection.png", g, height = 8, width = 16)
+
+```
+
+Expression profiles for the test set
+```{r, fig.height=10, fig.width=10}
+DefaultAssay(data.projected.subTest) <- "RNA"
+Idents(data.projected.subTest) <- "sequencing"
+data.seq <- SplitObject(data.projected.subTest)
+
+radarGenes <- c("FOXP3","CD4","CD8A","TCF7","CCR7","IL7R","IL2RA","GZMB","GZMK","PDCD1","HAVCR2","ENTPD1","TOX","TOX2","CXCL13","MIR155HG")
+
+Idents(ref) <- "sequencing"
+ref.seq <- SplitObject(ref)
+r <- plot.states.radar(ref.seq$`Single nuclei`,data.seq$`Single nuclei`,genes4radar=radarGenes,return = T, return.as.list = T, min.cells = 5)
+wrap_plots(r)
+ggsave("plots/radar.testset.sn.pdf",height = 7, width = 15)
+
+
+r <- plot.states.radar(ref.seq$`Single cells`,data.seq$`Single cells`,genes4radar=radarGenes,return = T, return.as.list = T, min.cells = 5)
+wrap_plots(r)
+ggsave("plots/radar.testset.sc.pdf",height = 7, width = 15)
+
+```
+
+# Conclusions
+
+The reference atlas defines 5 cell subtypes from (fresh) single-cell and (frozen) single-nuclei data. These subtypes are rather broad but are conserved across sequencing technologies and across samples. Despite successful data integration, fundamental differences remain between technologies in terms of detection of many genes, which pose a limit to the integrability of these data. In order to gain more resolution for cell subtype definition, specialized references for single-cell and single-nuclei would have to be defined.
+
+At this level of resolution, the atlas allows interpretation of external datasets using ProjecTILs. As shown above with validation and test datasets, projection is accurate and recapitulates the original annotation of the T cells; expression profiles of projected cells match well those of the reference atlas, when comparing the same technology (single-cell or single-nucleus). It can therefore be applied to additional datasets for their annotation - always checking expression profiles for key genes to ensure projection accuracy.
+
+
+
+
+
+
+
+
+

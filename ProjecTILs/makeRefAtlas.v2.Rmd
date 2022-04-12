@@ -1,0 +1,705 @@
+---
+title: Integrate sn- and scRNA-seq data of melanoma brain metastatis
+author: "M. Andreatta <massimo.andreatta at unil.ch> and S. Carmona <santiago.carmona at unil.ch>"
+knit: (function(input_file, encoding) {
+  out_dir <- 'docs';
+  rmarkdown::render(input_file,
+ encoding=encoding,
+ output_file=file.path(dirname(input_file), out_dir, 'index.html'))})
+#output: html_notebook
+---
+
+
+The cohort consists of melanoma metastases from the brain and periphery (subcutaneous) and the samples were sequenced using scRNA-seq and/or snRNA-seq (patient MBM05 has both). This notebook integrated the two modalities separately, then combines them, and converts the object into a reference atlas for ProjecTILs. In a separate notebook additional samples are projected into this reference map.
+
+**Updated Feb 2022 with new samples**
+
+```{r, message=FALSE, warning=F, results=FALSE}
+#renv::activate()
+renv::restore()
+
+#remotes::install_github("carmonalab/UCell")
+#remotes::install_github("carmonalab/scGate")
+
+library(gridExtra)
+library(ggplot2)
+library(Seurat)
+library(plyr)
+library(UCell)
+library(scGate)
+library(STACAS)
+```
+
+
+Download T cell data and load into memory
+```{r}
+dataUrl <- "https://dl.dropboxusercontent.com/s/xo00f14yrsrahdf/data_MBPM_scn_tcell.rds"
+fname <- "data_MBPM_scn_tcell.rds"
+download.file(dataUrl, fname)
+
+scn.data <- readRDS(fname)
+scn.data
+```
+
+Work with counts data, and re-integrate these datasets
+```{r}
+DefaultAssay(scn.data) <- "RNA"
+Idents(scn.data) <- "patient"
+```
+
+Completely remove samples with < 10 cells - mostly bringing noise 
+```{r}
+t <- table(scn.data$patient)
+
+suff.large.samples <-  names(t[t >= 10])
+scn.data <- subset(scn.data, subset=patient %in% suff.large.samples)
+```
+
+# Minimal QC
+Ribosomal and mitochondrial content
+```{r fig.height= 3}
+scn.data <- AddMetaData(scn.data, metadata = PercentageFeatureSet(scn.data, pattern = "^RP[LS]"), col.name = "percent.ribo")
+scn.data <- AddMetaData(scn.data, metadata = PercentageFeatureSet(scn.data, pattern = "^MT-"), col.name = "percent.mito")
+VlnPlot(scn.data, features = c("nFeature_RNA", "nCount_RNA","percent.ribo","percent.mito"), ncol = 2, pt.size=0.01)
+```
+
+```{r fig.height= 3}
+dim(scn.data)
+cellsKeep <- which(scn.data$nFeature_RNA < 5000 & scn.data$nFeature_RNA > 500 &
+                    scn.data$nCount_RNA < 20000 & scn.data$nCount_RNA > 1000 &
+                    scn.data$percent.ribo < 60 &
+                    scn.data$percent.mito < 10
+                   )
+
+scn.data <- subset(scn.data, cells=cellsKeep)
+
+dim(scn.data)
+
+Idents(scn.data) <- "patient"
+VlnPlot(scn.data, features = c("nFeature_RNA", "nCount_RNA","percent.ribo","percent.mito"), ncol = 2, pt.size=0.01)
+```
+Remove non-expressed genes
+```{r}
+DefaultAssay(scn.data) <- 'RNA'
+binary <- scn.data@assays$RNA@counts > 0
+gene.sums <- apply(binary, 1, sum)
+
+genes.keep <- names(gene.sums[gene.sums>4])
+
+scn.data <- subset(scn.data, features=genes.keep)
+```
+
+Dimensionality
+```{r}
+library(dplyr)
+scn.data <- scn.data %>% NormalizeData %>% FindVariableFeatures %>% ScaleData %>% RunPCA %>% RunUMAP(dims = 1:30)
+
+DimPlot(scn.data, group.by = "patient") + theme(aspect.ratio=1)
+
+DimPlot(scn.data, group.by = "sequencing") + theme(aspect.ratio=1)
+DimPlot(scn.data, group.by = "cell_type_fine")
+```
+
+Large batch effects! especially single-cell vs. single-nucleus are clearly separated in low-dim space
+
+Split by technology
+```{r}
+by.tech <- SplitObject(scn.data, split.by = "sequencing")
+
+sn.data <- by.tech$`Single nuclei`
+sc.data <- by.tech$`Single cells`
+```
+
+# Run scGate to check for any contaminants
+
+Cell cycling signatures
+```{r}
+bl <- scGate::genes.blacklist.default$Hs
+cycling.sign <- list(
+  "cycling.G1" = bl$cellCycle.G1S,
+  "cycling.G2" = bl$cellCycle.G2M,
+  "cycling" = c(bl$cellCycle.G1S, bl$cellCycle.G2M)
+)
+```
+
+Run scGate separately on the two modalities
+```{r}
+models <- scGate::get_scGateDB(version = "v0.4")
+model.T <- models$human$generic$Tcell
+
+sn.data <- scGate(sn.data, model = model.T , additional.signatures = cycling.sign, 
+                  assay = 'RNA', pos.thr = 0.1, neg.thr = 0.1)
+
+sc.data <- scGate(sc.data, model = model.T , additional.signatures = cycling.sign, 
+                  assay = 'RNA', pos.thr = 0.1, neg.thr = 0.1)
+
+DimPlot(sn.data)
+DimPlot(sn.data, group.by = "cell_type_fine")
+DimPlot(sc.data)
+DimPlot(sc.data, group.by = "cell_type_fine")
+```
+Remove NK cells and contaminants
+```{r}
+sn.data <- subset(sn.data, subset=is.pure=="Pure")
+sc.data <- subset(sc.data, subset=is.pure=="Pure")
+```
+
+
+Remove highly cycling cells (can distort the reference space)
+```{r}
+hist(sn.data$cycling_UCell, breaks = 30)
+hist(sc.data$cycling_UCell, breaks = 30)
+
+a <- VlnPlot(sn.data, features=c("cycling_UCell","cycling.G1_UCell","cycling.G2_UCell"), group.by = "sequencing")
+b <- VlnPlot(sc.data, features=c("cycling_UCell","cycling.G1_UCell","cycling.G2_UCell"), group.by = "sequencing")
+a | b
+
+#Fix a threshold for outlies in terms of cycling
+thr.g1 <- 0.1
+thr.g2 <- 0.1
+
+sn.data <- subset(sn.data, subset=cycling.G1_UCell < thr.g1 & cycling.G2_UCell < thr.g2)
+sc.data <- subset(sc.data, subset=cycling.G1_UCell < thr.g1 & cycling.G2_UCell < thr.g2)
+
+```
+
+
+We will exclude from integration all samples with too few cells. They can then be re-analyzed by projection into the reference
+```{r}
+min.cells <- 250
+
+counts <- table(sn.data$patient)
+pass <- names(counts[counts>min.cells])
+sn.data <- subset(sn.data, subset=patient %in% pass)
+
+counts <- table(sc.data$patient)
+pass <- names(counts[counts>min.cells])
+sc.data <- subset(sc.data, subset=patient %in% pass)
+
+table(sn.data$patient)
+table(sc.data$patient)
+```
+Save pre-processed objects
+```{r}
+to.save <- list("sn"=sn.data, "sc"=sc.data)
+saveRDS(to.save, file="aux/intermediate.save.rds")
+
+to.save <- readRDS("aux/intermediate.save.rds")
+sn.data <- to.save$sn
+sc.data <- to.save$sc
+```
+
+## Integrate separately single-nuclei and single-cell
+
+Prepare data for STACAS integration
+```{r}
+data.list.sc <- SplitObject(sc.data, split.by = "patient")
+names(data.list.sc)
+
+data.list.sn <- SplitObject(sn.data, split.by = "patient")
+names(data.list.sn)
+```
+
+# scRNA-seq integration
+```{r}
+var.genes.n <- 800
+var.genes.integrated.n <- 500
+bk.list <- unlist(scGate::genes.blacklist.default$Hs) 
+
+for (i in 1:length(data.list.sc)) {
+    data.list.sc[[i]] <- NormalizeData(data.list.sc[[i]], verbose = FALSE)
+    
+    data.list.sc[[i]] <- FindVariableFeatures(data.list.sc[[i]], selection.method = "vst", 
+        nfeatures = var.genes.n*2, verbose = FALSE)
+    
+    data.list.sc[[i]]@assays$RNA@var.features <- setdiff(data.list.sc[[i]]@assays$RNA@var.features, bk.list)
+    data.list.sc[[i]]@assays$RNA@var.features <- head(data.list.sc[[i]]@assays$RNA@var.features, var.genes.n)
+}
+
+```
+
+Select anchors
+```{r}
+ndim=10
+ref.anchors <- FindAnchors.STACAS(data.list.sc, dims=1:ndim, anchor.features=var.genes.integrated.n)
+```
+
+```{r fig.height=8}
+names <- names(data.list.sc)
+
+plots <- PlotAnchors.STACAS(ref.anchors, obj.names=names)
+
+wrap_plots(plots)
+```
+
+Filter anchors and integrate
+```{r}
+ref.anchors.filtered <- FilterAnchors.STACAS(ref.anchors, dist.thr = 0.9)
+
+all.genes <- row.names(data.list.sc[[1]])
+for (i in 2:length(data.list.sc)) {
+   all.genes <- intersect(all.genes, row.names(data.list.sc[[i]]))
+}
+
+mySampleTree <- SampleTree.STACAS(ref.anchors.filtered)
+print(mySampleTree)
+```
+
+```{r}
+ref.integrated.sc <- IntegrateData(anchorset=ref.anchors.filtered, features.to.integrate=all.genes, 
+                                dims=1:ndim, sample.tree=mySampleTree, preserve.order=T)
+```
+
+See integration results
+```{r}
+set.seed(1234)
+
+ndim=15
+length(ref.integrated.sc@assays$integrated@var.features)
+
+ref.integrated.sc <- ScaleData(ref.integrated.sc, verbose = TRUE)
+ref.integrated.sc <- RunPCA(ref.integrated.sc, features = ref.integrated.sc@assays$integrated@var.features,
+                         ndims.print = 1:5, nfeatures.print = 5)
+
+ndim=15  #how many PCA components to retain
+ref.integrated.sc <- RunUMAP(ref.integrated.sc, reduction = "pca", dims = 1:ndim, seed.use=123, n.neighbors = 30, min.dist=0.3)
+
+DimPlot(ref.integrated.sc, reduction = "umap", group.by = "sequencing") + ggtitle("UMAP by protocol")
+DimPlot(ref.integrated.sc, reduction = "umap", group.by = "patient") + ggtitle("By patient (single-cells)")
+DimPlot(ref.integrated.sc, reduction = "umap", group.by = "cell_type_fine") + ggtitle("Annotation (single-cells)")
+```
+
+```{r fig.height=4}
+DefaultAssay(ref.integrated.sc) <- 'RNA'
+
+FeaturePlot(ref.integrated.sc, features=c("TCF7","TOX","EOMES","LEF1","PRDM1","FOXP3"), ncol=3)
+FeaturePlot(ref.integrated.sc, features=c("GZMA","GZMB","GZMK","IFNG","TOP2A","MKI67"), ncol=3)
+FeaturePlot(ref.integrated.sc, features=c("PDCD1","LAG3","HAVCR2","CTLA4","IL7R","ENTPD1"), ncol=3)
+FeaturePlot(ref.integrated.sc, features=c("LCK","PTPRC","CD2","CD3G","TRAC","TRBC1"), ncol=3)
+FeaturePlot(ref.integrated.sc, features=c("TRAC","CD3G","CD3E","CD3D","CD2","CD8A"), ncol=3)
+FeaturePlot(ref.integrated.sc, features=c("FCER1G","CEBPD","FCGR3A","TYROBP","GNLY","NCAM1"), ncol=3)
+```
+
+# snRNA-seq integration
+```{r}
+var.genes.n <- 800
+var.genes.integrated.n <- 500
+bk.list <- unlist(scGate::genes.blacklist.default$Hs) 
+
+for (i in 1:length(data.list.sn)) {
+    data.list.sn[[i]] <- NormalizeData(data.list.sn[[i]], verbose = FALSE)
+    
+    data.list.sn[[i]] <- FindVariableFeatures(data.list.sn[[i]], selection.method = "vst", 
+        nfeatures = var.genes.n*2, verbose = FALSE)
+    
+    data.list.sn[[i]]@assays$RNA@var.features <- setdiff(data.list.sn[[i]]@assays$RNA@var.features, bk.list)
+    data.list.sn[[i]]@assays$RNA@var.features <- head(data.list.sn[[i]]@assays$RNA@var.features, var.genes.n)
+}
+```
+
+Select anchors
+```{r}
+ndim=10
+ref.anchors <- FindAnchors.STACAS(data.list.sn, dims=1:ndim, anchor.features=var.genes.integrated.n)
+```
+
+```{r fig.height=8}
+names <- names(data.list.sn)
+plots <- PlotAnchors.STACAS(ref.anchors, obj.names=names)
+
+wrap_plots(plots)
+```
+
+Filter anchors and integrate
+```{r}
+ref.anchors.filtered <- FilterAnchors.STACAS(ref.anchors, dist.thr = 1)
+
+all.genes <- row.names(data.list.sn[[1]])
+for (i in 2:length(data.list.sn)) {
+   all.genes <- intersect(all.genes, row.names(data.list.sn[[i]]))
+}
+
+mySampleTree <- SampleTree.STACAS(ref.anchors.filtered)
+print(mySampleTree)
+```
+
+```{r}
+ref.integrated.sn <- IntegrateData(anchorset=ref.anchors.filtered, features.to.integrate=all.genes, 
+                                dims=1:ndim, sample.tree=mySampleTree, preserve.order=T)
+```
+
+```{r}
+set.seed(1234)
+
+ndim=15
+length(ref.integrated.sn@assays$integrated@var.features)
+
+ref.integrated.sn <- ScaleData(ref.integrated.sn, verbose = TRUE)
+ref.integrated.sn <- RunPCA(ref.integrated.sn, features = ref.integrated.sn@assays$integrated@var.features,
+                         ndims.print = 1:5, nfeatures.print = 5)
+
+ndim=15  #how many PCA components to retain
+ref.integrated.sn <- RunUMAP(ref.integrated.sn, reduction = "pca", dims = 1:ndim, seed.use=123, n.neighbors = 30, min.dist=0.3)
+
+DimPlot(ref.integrated.sn, reduction = "umap", group.by = "sequencing") + ggtitle("UMAP by protocol")
+DimPlot(ref.integrated.sn, reduction = "umap", group.by = "patient") + ggtitle("By patient (single-nuclei)")
+DimPlot(ref.integrated.sn, reduction = "umap", group.by = "cell_type_fine") + ggtitle("Annotation (single-nuclei)")
+```
+
+```{r fig.height=4}
+DefaultAssay(ref.integrated.sn) <- 'RNA'
+
+FeaturePlot(ref.integrated.sn, features=c("TCF7","TOX","EOMES","LEF1","PRDM1","FOXP3"), ncol=3)
+FeaturePlot(ref.integrated.sn, features=c("GZMA","GZMB","GZMK","IFNG","TOP2A","MKI67"), ncol=3)
+FeaturePlot(ref.integrated.sn, features=c("PDCD1","LAG3","HAVCR2","CTLA4","IL7R","ENTPD1"), ncol=3)
+FeaturePlot(ref.integrated.sn, features=c("LCK","PTPRC","CD2","CD3G","TRAC","TRBC1"), ncol=3)
+```
+
+## Now integrate the two technologies
+
+```{r}
+DefaultAssay(ref.integrated.sc) <- "integrated"
+DefaultAssay(ref.integrated.sn) <- "integrated"
+
+var.sc <- ref.integrated.sc@assays$integrated@var.features
+var.sn <- ref.integrated.sn@assays$integrated@var.features
+
+length(var.sc) 
+length(var.sn) 
+intersect.genes <- intersect(var.sn, var.sc)
+union.genes <- unique(c(var.sn, var.sc))
+
+length(intersect.genes)
+length(union.genes)
+```
+
+Improve selection of variable features for integration
+```{r}
+data.tmp <- list()
+data.tmp[['sn']] <- data.list.sn
+data.tmp[['sc']] <- data.list.sc
+
+bk.list <- c(bk.list, "TRAC", "TRBC1", "TRBC2")
+
+for (tech in names(data.tmp)) {
+  for (i in 1:length(data.tmp[[tech]])) {
+    this <- data.tmp[[tech]][[i]]
+    this <- NormalizeData(this, verbose = FALSE)
+    this <- FindVariableFeatures(this, selection.method = "vst", nfeatures = 2000, verbose = FALSE)
+    
+    this@assays$RNA@var.features <- setdiff(this@assays$RNA@var.features, bk.list)
+    data.tmp[[tech]][[i]] <- this
+  }
+}
+
+features.sn <- SelectIntegrationFeatures(data.tmp$sn, nfeatures = 1000, assay=rep("RNA",length(data.tmp$sn)))
+features.sc <- SelectIntegrationFeatures(data.tmp$sc, nfeatures = 1000, assay=rep("RNA",length(data.tmp$sc)))
+
+genes.use <- intersect(features.sn, features.sc)
+length(genes.use)
+```
+
+
+Store objects to integrate in a list
+```{r}
+to.integrate <- list("snRNA-seq"=ref.integrated.sn,
+                     "scRNA-seq"=ref.integrated.sc)
+to.integrate
+```
+
+Select anchors
+```{r}
+ndim=10
+
+ref.anchors <- FindAnchors.STACAS(to.integrate, dims=1:ndim, anchor.features=genes.use, assay=c("integrated","integrated"))
+```
+
+
+Skip anchor filtering (only two datasets)
+```{r}
+ref.anchors.filtered <- ref.anchors
+
+all.genes <- intersect(row.names(to.integrate$`snRNA-seq`), row.names(to.integrate$`scRNA-seq`))
+
+mySampleTree <- SampleTree.STACAS(ref.anchors.filtered)
+print(mySampleTree)
+```
+
+```{r}
+ref.integrated.global <- IntegrateData(anchorset=ref.anchors.filtered,
+                                dims=1:ndim, features.to.integrate=genes.use, sample.tree=mySampleTree, preserve.order=T)
+```
+
+See results in low-dim space
+```{r}
+set.seed(1234)
+
+ndim=15
+length(ref.integrated.global@assays$integrated@var.features)
+
+ref.integrated.global <- ScaleData(ref.integrated.global, verbose = TRUE)
+ref.integrated.global <- RunPCA(ref.integrated.global, features = ref.integrated.global@assays$integrated@var.features,
+                         ndims.print = 1:5, nfeatures.print = 5)
+
+ref.integrated.global <- RunUMAP(ref.integrated.global, reduction = "pca", dims = 1:ndim, seed.use=123, n.neighbors = 30, min.dist=0.3)
+
+DimPlot(ref.integrated.global, reduction = "umap", group.by = "patient") + ggtitle("UMAP by patient")
+DimPlot(ref.integrated.global, reduction = "umap", group.by = "sequencing") + ggtitle("UMAP by protocol")
+DimPlot(ref.integrated.global, reduction = "umap", group.by = "cell_type_fine")
+```
+```{r fig.height=4}
+DefaultAssay(ref.integrated.global) <- 'RNA'
+
+FeaturePlot(ref.integrated.global, features=c("TCF7","TOX","EOMES","LEF1","PRDM1","FOXP3"), ncol=3)
+FeaturePlot(ref.integrated.global, features=c("GZMA","GZMB","GZMK","IFNG","TOP2A","MKI67"), ncol=3)
+FeaturePlot(ref.integrated.global, features=c("PDCD1","LAG3","HAVCR2","CTLA4","IL7R","ENTPD1"), ncol=3)
+FeaturePlot(ref.integrated.global, features=c("LCK","PTPRC","CD2","CD3G","TRAC","TRBC1"), ncol=3)
+FeaturePlot(ref.integrated.global, features=c("CD4","CD40LG","CD8A","CD8B","TRAC","TRBC1"), ncol=3)
+```
+
+```{r}
+saveRDS(ref.integrated.global,"MBPM_integrated.v2.rds")
+
+ref.integrated.global <- readRDS("MBPM_integrated.v2.rds")
+```
+
+```{r}
+source("functions.R")
+ref <- ref.integrated.global
+ndim=15
+set.seed(1234)
+ref.pca <- make.pca(ref, pca.dim=ndim)
+head(ref.pca$rotation)
+```
+
+View PCA and UMAP projections
+```{r fig.height=2, fig.width=2}
+set.seed(1234)
+ref.umap <- make.umap(ref, pca.dim=ndim, pca.obj=ref.pca, n.neighbors=30, min.dist=0.3, seed=1234, metric="cosine")
+ggplot(data.frame(ref.umap$layout),  aes(x=UMAP_1,y=UMAP_2, col="blue")) + geom_point(color="blue", alpha=0.7, size=0.5)
+```
+
+
+
+Overwrite previous UMAP configuration with the one calculated externally
+```{r}
+ref@reductions$umap@cell.embeddings <- ref.umap$layout
+ref@reductions$pca@cell.embeddings <- ref.pca$x
+ref@reductions$pca@feature.loadings <- ref.pca$rotation
+colnames(ref@reductions$pca@cell.embeddings) <- gsub("PC(\\d+)", "PC_\\1", colnames(ref.pca$x), perl=TRUE)
+colnames(ref@reductions$pca@feature.loadings) <- gsub("PC(\\d+)", "PC_\\1", colnames(ref.pca$rotation), perl=TRUE)
+ref@misc$pca_object <- ref.pca
+ref@misc$umap_object <- ref.umap
+```
+
+```{r}
+VizDimLoadings(ref, dims = 1:6, nfeatures=12, reduction = "pca", ncol=3)
+VizDimLoadings(ref, dims = 7:12, nfeatures=12, reduction = "pca", ncol=3)
+DimPlot(ref, reduction = "umap", label = TRUE, pt.size = 0.5, group.by = "cell_type_fine") + NoLegend() + theme(aspect.ratio = 1)
+DimPlot(ref, reduction = "umap", label = TRUE, pt.size = 0.5, group.by = "sequencing") + NoLegend() + theme(aspect.ratio = 1)
+```
+
+```{r}
+FeaturePlot(ref, reduction = "umap", features=c("TOX","TCF7","PDCD1","FOXP3","CD8A","CD4"), 
+            pt.size = 0.01, slot = "data", ncol=3, order=T, label = F,combine = T) 
+```
+
+Unsupervised clustering (Add resolution for finer clusters) 
+
+```{r fig.width=3, fig.height=2}
+DefaultAssay(ref) <- "integrated"
+ndim=10
+ref <- FindNeighbors(ref, reduction = "pca", dims = 1:ndim, k.param = 15)
+resol=0.3
+ref <- FindClusters(ref, resolution = resol)
+g <- DimPlot(ref, reduction = "umap", group.by = "seurat_clusters", pt.size = 0.5, label = T) + ggtitle("Unsupervised clustering") + NoLegend()
+t <- DimPlot(ref, reduction = "umap", group.by = "cell_type_fine", pt.size = 0.5, label = T) + NoLegend()
+g | t
+
+
+
+```
+
+
+```{r}
+table(ref$seurat_clusters,ref$cell_type_fine)
+```
+Can we improve cluster annotation, by markers/signatures?
+```{r}
+DefaultAssay(ref) <- "RNA"
+sig <- list()
+sig$CD8T <- c("CD8A","CD8B")
+sig$CD4T <- c("CD4","CD40LG")
+sig$Treg <- c("FOXP3","IL2RA")
+sig$NKT <- c("FGFBP2","SPON2","KLRF1","FCGR3A","KLRD1","GNLY")
+
+sig$Naive <- c("SELL","TCF7","CCR7","LEF1")
+sig$EM <- c("GZMA","GZMK","CCL5","NKG7","HAVCR2-","LAG3-")
+sig$Tex <- c("HAVCR2","PDCD1","LAG3","PRF1","TOX")
+sig$Tpex <- c("XCL1","CD200","CRTAM")
+sig$Tfh <- c("CXCL13","TOX","CD40LG","CD8A-","CD8B-")
+sig$Th1 <- c("CXCR6","GZMB","CCL5","CD8A-","CD8B-")
+
+ref <- AddModuleScore_UCell(ref, features = sig, ncores=4)
+DefaultAssay(ref) <- "integrated"
+```
+
+View scores
+```{r fig.height=6}
+DefaultAssay(ref) <- "RNA"
+feats <- c(paste0(names(sig), "_UCell"), "CD8A", "CD8B", "SELL","TCF7","GZMB","HAVCR2","LAG3","TOX","CXCL13")
+
+FeaturePlot(ref, features = feats, ncol=4)
+DefaultAssay(ref) <- "integrated"
+```
+```{r fig.height=4}
+DefaultAssay(ref) <- "RNA"
+feats <- c(paste0(names(sig), "_UCell"), "CD8A", "CD8B", "SELL","TCF7","GZMB","TOX","HAVCR2","LAG3","PDCD1")
+
+VlnPlot(ref, features=feats, group.by = "seurat_clusters", pt.size = 0)
+DefaultAssay(ref) <- "integrated"
+```
+
+Try to annotate
+```{r}
+ref$functional.cluster <- NA
+ref$functional.cluster[ref$seurat_clusters %in% c(0)] <- "CD8_Tex"
+ref$functional.cluster[ref$seurat_clusters %in% c(1)] <- "CD4_helper"
+ref$functional.cluster[ref$seurat_clusters %in% c(2)] <- "CD8_EM"
+ref$functional.cluster[ref$seurat_clusters %in% c(3)] <- "Treg"
+ref$functional.cluster[ref$seurat_clusters %in% c(4)] <- "Tfh-like"
+
+Idents(ref) <- "functional.cluster"
+DimPlot(ref, label=T)
+```
+Color palette
+```{r}
+library(RColorBrewer)
+ncolors <- length(unique(ref$functional.cluster))
+
+palette <- brewer.pal(ncolors , "Set2")
+#display.brewer.pal(ncolors, "Set2")
+
+#Reorder levels
+table(ref$functional.cluster)
+ref$functional.cluster <- factor(ref$functional.cluster, levels=c("CD8_Tex","CD8_EM","CD4_helper","Tfh-like","Treg"))
+
+Idents(ref) <- "functional.cluster"
+names(palette) <- levels(ref$functional.cluster)
+a <- DimPlot(ref, label=T, cols = palette) + NoLegend() + theme(aspect.ratio = 1)
+a
+
+ggsave("plots/MBM.Tcell.reference.integrated.png", height=4, width=6)
+ggsave("plots/MBM.Tcell.reference.integrated.pdf", height=4, width=6)
+
+#naked version
+DimPlot(ref, cols = palette) + NoLegend() + 
+  theme(aspect.ratio = 1, 
+                     axis.title=element_blank(),
+                     axis.text=element_blank(),
+                     axis.ticks=element_blank()) 
+ggsave("plots/MBM.Tcell.reference.integrated.minimal.pdf", height=4, width=6)
+
+```
+
+```{r fig.height=6}
+DefaultAssay(ref) <- "RNA"
+feats <- c(paste0(names(sig), "_UCell"), "CD8A", "CD8B", "SELL","TCF7","GZMB","GZMK","TOX","HAVCR2","LAG3","PDCD1")
+
+VlnPlot(ref, features=feats, group.by = "functional.cluster", pt.size = 0, ncol=5, cols=palette)
+
+DefaultAssay(ref) <- "integrated"
+```
+
+```{r}
+table(ref$functional.cluster, ref$cell_type_fine)
+```
+
+#Save data and parameters in reference object
+```{r}
+ref@misc$projecTILs="ref_TIL_MBM_human_v2"
+ref@misc$atlas.palette <- palette
+ref@misc$scGate <- list()
+ref@misc$scGate$mouse <- models$mouse$generic$Tcell
+ref@misc$scGate$human <- models$human$generic$Tcell
+
+#only relevant metadata
+ref@meta.data <- ref@meta.data[,c("orig.ident","sequencing","patient","functional.cluster","cycling_UCell","cycling.G1_UCell","cycling.G2_UCell")]
+
+
+DimPlot(ref, reduction = "umap", group.by = "functional.cluster", pt.size = 0.5, cols=ref@misc$atlas.palette, label = T) + ggtitle("Unsupervised clustering") 
+```
+
+
+```{r}
+DimPlot(ref, reduction = "umap", group.by = "patient", label = F) + 
+  theme(aspect.ratio=1) + ggtitle("By patient") 
+
+ggsave("plots/MBM.Tcell.integrated.bypat.png", height=4, width=6)
+ggsave("plots/MBM.Tcell.integrated.bypat.pdf", height=4, width=6)
+
+DimPlot(ref, reduction = "umap", group.by = "sequencing",label = F, cols = c("#fdcf00","#04d490")) + 
+  theme(aspect.ratio=1) + ggtitle("By technology") 
+
+ggsave("plots/MBM.Tcell.integrated.byseq.png", height=4, width=6)
+ggsave("plots/MBM.Tcell.integrated.byseq.pdf", height=4, width=6)
+
+```
+
+```{r fig.height=7, fig.width=2}
+library(patchwork)
+
+Idents(ref) <- "functional.cluster"
+DefaultAssay(ref) <- "RNA"
+
+markerGenes <- c("TOX","IL7R","LEF1","IL2RA","CXCL13","TOX2","ITGAE","CCL5","BATF","ICOS","KLRD1","MIR155HG","ENTPD1","HAVCR2","CD69","TNFRSF9","TCF7","SELL","CD8A","CD4","FOXP3") # from intersect.genes
+
+VlnPlot(ref, features = c("CD8A", "CD4", markerGenes), fill.by="ident", cols=ref@misc$atlas.palette, stack = T, flip=T)
+ggsave("plots/MBM.Tcell.violins.png", height=10, width=5)
+ggsave("plots/MBM.Tcell.violins.pdf", height=10, width=5)
+
+
+```
+
+```{r fig.height=4, fig.width=3.5}
+markerGenes <- c("CD8A","FOXP3","TCF7","IL7R","TOX","HAVCR2")
+
+pll <- FeaturePlot(ref, features = markerGenes, pt.size = 0.1, combine = F)
+
+for (i in seq_along(pll)) {
+ pll[[i]] <- pll[[i]] + theme(aspect.ratio = 1, 
+                     axis.title=element_blank(),
+                     axis.text=element_blank(),
+                     axis.ticks=element_blank()) 
+}
+wrap_plots(pll, ncol = 3)
+
+ggsave("plots/MBM.Tcell.featureplot.png", width=9, height=5)
+ggsave("plots/MBM.Tcell.featureplot.pdf", width=9, height=5)
+
+```
+
+```{r eval=T}
+saveRDS(ref, file="ref_TIL_MBM_human_v2.full.rds")
+```
+
+
+Reduce size of object before saving
+```{r}
+set.seed(1234)
+#ref.diet <- subset(ref.diet, cells = sample(Cells(ref.diet),30000) )
+#ref.diet
+
+ref.diet <- DietSeurat(ref,counts=FALSE,data=TRUE,assays = c("RNA","integrated"),dimreducs = c("pca","umap"))
+
+sort(table(ref.diet$functional.cluster))
+```
+
+```{r eval=T}
+DimPlot(ref.diet, reduction = "umap", label = TRUE, pt.size = 0.5, group.by = "functional.cluster", cols=ref@misc$atlas.palette) + NoLegend() + theme(aspect.ratio = 1)
+
+saveRDS(ref.diet, file="ref_TIL_MBM_human_v2.rds")
+
+```
+
+
