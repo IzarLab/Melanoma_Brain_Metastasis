@@ -17,6 +17,7 @@ library(ggrepel)
 
 colBP <- c('#A80D11', '#008DB8')
 colSCSN <- c('#E1AC24', '#288F56')
+type<- 'tumor'
 
 # Read-in integrated dataset
 seu <- readRDS('data/MBPM/data_MBPM_scn.rds')
