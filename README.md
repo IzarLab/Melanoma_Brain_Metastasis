@@ -7,7 +7,7 @@ Jana Biermann*, Johannes C. Melms*, Amit Dipak Amin, Yiping Wang, Lindsay A. Cap
 Overview of code structure and corresponding Figures and Tables can be found in `code_overview.xlsx`
 
 ### Publication
-xxx
+https://doi.org/10.1016/j.cell.2022.06.007
 
 ### Processed data available through GEO (GSE185386)
 https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE185386
