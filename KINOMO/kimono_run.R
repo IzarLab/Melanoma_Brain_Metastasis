@@ -17,15 +17,20 @@ library(dplyr)
 library(Seurat)
 library(ggplot2)
 library(gplots)
+library(NMF)
+library(registry)
+library(rngtools)
 library(purrr)
 library(cowplot)
 library(stringr)
+library(pkgmaker)
+library(cluster)
 
 source("/KINOMO/KINOMO.R")
 
-pat <- 'MBM05_sn'
+pat <- 'Filename'
 
-integrated<-readRDS("MBM05_sn.rds")
+integrated<-readRDS(paste0(Filename,".rds"))
 
 #Seurat Object creation and necessary pre-filteration, normalization. Please customize if necessary.
 DefaultAssay(object = integrated) <- "RNA"
@@ -71,10 +76,11 @@ mat<-mat[rowSums(mat)>0,]
 #inflection point, and (Frigyesi2008) considered the smallest value at which #the decrease in the RSS is lower than the decrease of the RSS obtained 
 #from random data.
 
-pdf(file = paste0(pat,"_nmf.pdf"),height = 20,width=20)
-nmf.estimate.rank <- KINOMO(mat, 2:10, nrun=10)
+pdf(file = paste0(pat,"_KINOMO_nmf.pdf"),height = 20,width=20)
+#nmf.estimate.rank <- KINOMO(mat, 2:10, nrun=10)
+nmf.estimate.rank <- nmf(mat, 2:10, nrun=10)
 plot(nmf.estimate.rank)
-dev,off()
+dev.off()
 
 #test
 seu1<-seu
@@ -85,8 +91,9 @@ seu5<-seu
 
 #Perform factorization using estimated rank
 myrank<-4
-nmf.estimate.rank <- KINOMO(mat, rank=myrank)
-saveRDS(nmf.estimate.rank,paste0(pat,"/",pat,"_nmf_rank_",myrank,".rds"))
+#nmf.estimate.rank <- KINOMO(mat, rank=myrank)
+nmf.estimate.rank <- nmf(mat, rank=myrank)
+saveRDS(nmf.estimate.rank,paste0(pat,"/",pat,"_KINOMO_nmf_rank_",myrank,".rds"))
 res<-nmf.estimate.rank
 
 #top30 meta-genes
@@ -97,7 +104,7 @@ for(c in 1:myrank){
   tab[,c]<-rownames(as.data.frame(res@fit@W))[genes]
   colnames(tab)[c]<-paste0(pat,'_factor',c)
 }
-write.csv(tab,paste0(pat,"/",pat, "_nmf_rank_",myrank,"_top30_W.csv"))
+write.csv(tab,paste0(pat,"/",pat, "_KINOMO_nmf_rank_",myrank,"_top30_W.csv"))
 for(c in 1:ncol(tab)){
   seu1<-AddModuleScore(object = seu1,features = list(tab[,c]),name = colnames(tab)[c],assay = 'RNA',search=T)
 }
@@ -113,7 +120,7 @@ for(c in 1:myrank){
   tab1[,c]<-rownames(as.data.frame(res@fit@W))[genes]
   colnames(tab1)[c]<-paste0(pat,'_factor',c)
 }
-write.csv(tab1,paste0(pat,"/",pat, "_nmf_rank_",myrank,"_top50_W.csv"))
+write.csv(tab1,paste0(pat,"/",pat, "_KINOMO_nmf_rank_",myrank,"_top50_W.csv"))
 for(c in 1:ncol(tab1)){
   seu2<-AddModuleScore(object = seu2,features = list(tab1[,c]),name = colnames(tab1)[c],assay = 'RNA',search=T)
 }
@@ -129,7 +136,7 @@ for(c in 1:myrank){
   tab2[,c]<-rownames(as.data.frame(res@fit@W))[genes]
   colnames(tab2)[c]<-paste0(pat,'_factor',c)
 }
-write.csv(tab2,paste0(pat,"/",pat, "_nmf_rank_",myrank,"_top100_W.csv"))
+write.csv(tab2,paste0(pat,"/",pat, "_KINOMO_nmf_rank_",myrank,"_top100_W.csv"))
 for(c in 1:ncol(tab2)){
   seu3<-AddModuleScore(object = seu2,features = list(tab2[,c]),name = colnames(tab2)[c],assay = 'RNA',search=T)
 }
@@ -145,7 +152,7 @@ for(c in 1:myrank){
   tab3[,c]<-rownames(as.data.frame(res@fit@W))[genes]
   colnames(tab3)[c]<-paste0(pat,'_factor',c)
 }
-write.csv(tab3,paste0(pat,"/",pat, "_nmf_rank_",myrank,"_top200_W.csv"))
+write.csv(tab3,paste0(pat,"/",pat, "_KINOMO_nmf_rank_",myrank,"_top200_W.csv"))
 for(c in 1:ncol(tab3)){
   seu4<-AddModuleScore(object = seu3,features = list(tab3[,c]),name = colnames(tab3)[c],assay = 'RNA',search=T)
 }
@@ -161,7 +168,7 @@ for(c in 1:myrank){
   tab4[,c]<-rownames(as.data.frame(res@fit@W))[genes]
   colnames(tab4)[c]<-paste0(pat,'_factor',c)
 }
-write.csv(tab4,paste0(pat,"/",pat, "_nmf_rank_",myrank,"_top300_W.csv"))
+write.csv(tab4,paste0(pat,"/",pat, "_KINOMO_nmf_rank_",myrank,"_top300_W.csv"))
 for(c in 1:ncol(tab4)){
   seu5<-AddModuleScore(object = seu5,features = list(tab4[,c]),name = colnames(tab4)[c],assay = 'RNA',search=T)
 }
@@ -172,7 +179,7 @@ genelist4 <- genelist4[!duplicated(genelist4)]
 
 
 #Plot meta-gene signatures
-pdf(file = paste0(pat,"/",pat, "_nmf_rank_",myrank,".pdf"),height = 20,width=20)
+pdf(file = paste0(pat,"/",pat, "_KINOMO_nmf_rank_",myrank,".pdf"),height = 20,width=20)
 
 print(FeaturePlot(seu1, features = c(paste0(pat,'_factor',seq(1,myrank),'1')),min.cutoff = "q10", max.cutoff = "q99"))
 print(FeaturePlot(seu2, features = c(paste0(pat,'_factor',seq(1,myrank),'1')),min.cutoff = "q10", max.cutoff = "q99"))
@@ -181,28 +188,28 @@ print(FeaturePlot(seu4, features = c(paste0(pat,'_factor',seq(1,myrank),'1')),mi
 print(FeaturePlot(seu5, features = c(paste0(pat,'_factor',seq(1,myrank),'1')),min.cutoff = "q10", max.cutoff = "q99"))
 
 dev.off()
-write.csv(res@fit@W,paste0(pat,"/",pat, "_nmf_rank_",myrank,"_W.csv"))
-write.csv(res@fit@H,paste0(pat,"/",pat, "_nmf_rank_",myrank,"_H.csv"))
+write.csv(res@fit@W,paste0(pat,"/",pat, "_KINOMO_nmf_rank_",myrank,"_W.csv"))
+write.csv(res@fit@H,paste0(pat,"/",pat, "_KINOMO_nmf_rank_",myrank,"_H.csv"))
 
 #Plot meta-genes heatmaps
-pdf(file=paste0(pat,"/",pat, "_nmf_rank_",myrank,"_basismap_30.pdf"),width = 10, height = 10)
+pdf(file=paste0(pat,"/",pat, "_KINOMO_nmf_rank_",myrank,"_basismap_30.pdf"),width = 10, height = 10)
 basismap(res[rownames(res)%in%genelist,])
 dev.off()
 
-pdf(file=paste0(pat,"/",pat, "_nmf_rank_",myrank,"_basismap_50.pdf"),width = 20, height = 20)
+pdf(file=paste0(pat,"/",pat, "_KINOMO_nmf_rank_",myrank,"_basismap_50.pdf"),width = 20, height = 20)
 #basismap(res[rownames(res)%in%c("FAM87B","LINC01128", "LINC00115","FAM41C","AL645608.6"),],color = "-RdYlBu")
 basismap(res[rownames(res)%in%genelist1,])
 dev.off()
 
-pdf(file=paste0(pat,"/",pat, "_nmf_rank_",myrank,"_basismap_100.pdf"),width = 30, height = 30)
+pdf(file=paste0(pat,"/",pat, "_KINOMO_nmf_rank_",myrank,"_basismap_100.pdf"),width = 30, height = 30)
 basismap(res[rownames(res)%in%genelist2,])
 dev.off()
 
-pdf(file=paste0(pat,"/",pat, "_nmf_rank_",myrank,"_basismap_200.pdf"),width = 40, height = 40)
+pdf(file=paste0(pat,"/",pat, "_KINOMO_nmf_rank_",myrank,"_basismap_200.pdf"),width = 40, height = 40)
 basismap(res[rownames(res)%in%genelist3,])
 dev.off()
 
-pdf(file=paste0(pat,"/",pat, "_nmf_rank_",myrank,"_basismap_300.pdf"),width = 50, height = 50)
+pdf(file=paste0(pat,"/",pat, "_KINOMO_nmf_rank_",myrank,"_basismap_300.pdf"),width = 50, height = 50)
 basismap(res[rownames(res)%in%genelist4,])
 dev.off()
 
