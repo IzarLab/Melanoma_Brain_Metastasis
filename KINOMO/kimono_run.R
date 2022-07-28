@@ -26,7 +26,7 @@ library(stringr)
 library(pkgmaker)
 library(cluster)
 
-source("/KINOMO/KINOMO.R")
+#source("/KINOMO/KINOMO.R")
 
 pat <- 'Filename'
 
